@@ -31,13 +31,37 @@ export function tileToLngLatBounds(index: TileIndex): TileLngLatBounds {
   return { west, south, east, north };
 }
 
+type ViewStateWithZoom = {
+  longitude: number;
+  latitude: number;
+  zoom: number;
+  pitch?: number;
+  bearing?: number;
+};
+
+function toViewStateWithZoom(
+  viewState: MapViewState | { longitude: number; latitude: number },
+  zoomOverride?: number,
+): ViewStateWithZoom {
+  const zoom = zoomOverride ?? ("zoom" in viewState ? (viewState as MapViewState).zoom : 10);
+  return {
+    longitude: viewState.longitude,
+    latitude: viewState.latitude,
+    zoom,
+    pitch: "pitch" in viewState ? (viewState as MapViewState).pitch : 0,
+    bearing: "bearing" in viewState ? (viewState as MapViewState).bearing : 0,
+  };
+}
+
 export function tileToWorldBounds(
-  viewState: MapViewState,
+  viewState: MapViewState | { longitude: number; latitude: number },
   viewportSize: TileSize,
   index: TileIndex,
+  zoomOverride?: number,
 ): TileWorldBounds {
+  const vs = toViewStateWithZoom(viewState, zoomOverride);
   const viewport = new WebMercatorViewport({
-    ...viewState,
+    ...vs,
     width: Math.max(1, viewportSize.width),
     height: Math.max(1, viewportSize.height),
   });
@@ -61,9 +85,14 @@ export function tileToWorldBounds(
   };
 }
 
-export function metersToWorldScale(viewState: MapViewState, viewportSize: TileSize): number {
+export function metersToWorldScale(
+  viewState: MapViewState | { longitude: number; latitude: number },
+  viewportSize: TileSize,
+  zoomOverride?: number,
+): number {
+  const vs = toViewStateWithZoom(viewState, zoomOverride);
   const viewport = new WebMercatorViewport({
-    ...viewState,
+    ...vs,
     width: Math.max(1, viewportSize.width),
     height: Math.max(1, viewportSize.height),
   });

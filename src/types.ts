@@ -6,6 +6,18 @@ export type MapViewState = {
   bearing: number;
 };
 
+export type FirstPersonViewState = {
+  longitude: number;
+  latitude: number;
+  position: [number, number, number];
+  pitch: number;
+  bearing: number;
+  minPitch?: number;
+  maxPitch?: number;
+};
+
+export type ViewMode = "map" | "firstPerson";
+
 export type TileIndex = {
   x: number;
   y: number;

@@ -39,6 +39,46 @@ body,
   pointer-events: auto;
 }
 
+.mode-toggle {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #41506f;
+  border-radius: 4px;
+  background: #182236;
+  color: #e8eeff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mode-toggle:hover {
+  background: #243050;
+}
+
+.fp-hint {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #8899bb;
+  display: grid;
+  gap: 4px;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speed-control input {
+  width: 72px;
+  border: 1px solid #41506f;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  background: #08101e;
+  color: #e8eeff;
+}
+
 .debug-panel {
   margin-top: 10px;
   display: grid;

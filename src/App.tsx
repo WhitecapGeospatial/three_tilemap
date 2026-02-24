@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
+import { FirstPersonView } from "@deck.gl/core";
 import { Canvas, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { MapViewState, TileSize } from "./types";
+import type { MapViewState, FirstPersonViewState, TileSize } from "./types";
 import { useViewStateStore } from "./store/viewStateStore";
 import { useDeckTileTerrain } from "./terrain/useDeckTileTerrain";
 import { TerrainScene } from "./terrain/TerrainScene";
@@ -74,17 +75,179 @@ async function createRenderer(props: ConstructorParameters<typeof THREE.WebGLRen
   }
 }
 
+const fpView = new FirstPersonView({
+  id: "fp",
+  controller: {
+    keyboard: false,
+  } as FirstPersonView["props"]["controller"],
+  fovy: 75,
+  near: 0.1,
+  far: 100000,
+});
+
+const DEFAULT_MOVEMENT_SPEED = 50;
+const LOOK_SPEED_DEG_PER_SECOND = 90;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function isTextInputTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = target.tagName;
+  return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
+}
+
 export function App() {
-  const { viewState, setViewState } = useViewStateStore();
+  const { mode, mapViewState, fpViewState, setMode, setMapViewState, setFpViewState } = useViewStateStore();
   const { ref, size } = useElementSize<HTMLDivElement>();
   const [debug, setDebug] = useState(DEFAULT_DEBUG_VIS_STATE);
   const [rendererType, setRendererType] = useState<string>("…");
+  const [movementSpeed, setMovementSpeed] = useState(DEFAULT_MOVEMENT_SPEED);
   const { layer, tileRecords, decodeParams } = useDeckTileTerrain({
     base: -10000,
     interval: 0.1,
   });
 
   const layers = useMemo(() => [layer], [layer]);
+
+  const isFirstPerson = mode === "firstPerson";
+  const fpStateRef = useRef(fpViewState);
+
+  useEffect(() => {
+    fpStateRef.current = fpViewState;
+  }, [fpViewState]);
+
+  useEffect(() => {
+    if (!isFirstPerson) {
+      return;
+    }
+
+    const activeKeys = new Set<string>();
+    const trackedKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyR", "KeyF", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+
+    let rafId = 0;
+    let previousTime = performance.now();
+
+    const tick = (now: number) => {
+      const dt = (now - previousTime) / 1000;
+      previousTime = now;
+
+      const current = fpStateRef.current;
+      const [x0, y0, z0] = current.position;
+      let x = x0;
+      let y = y0;
+      let z = z0;
+      let bearing = current.bearing;
+      let pitch = current.pitch;
+
+      const lookStep = LOOK_SPEED_DEG_PER_SECOND * dt;
+      if (activeKeys.has("ArrowLeft")) {
+        bearing -= lookStep;
+      }
+      if (activeKeys.has("ArrowRight")) {
+        bearing += lookStep;
+      }
+      if (activeKeys.has("ArrowUp")) {
+        pitch += lookStep;
+      }
+      if (activeKeys.has("ArrowDown")) {
+        pitch -= lookStep;
+      }
+
+      const minPitch = current.minPitch ?? -89;
+      const maxPitch = current.maxPitch ?? 89;
+      pitch = clamp(pitch, minPitch, maxPitch);
+
+      const moveStep = movementSpeed * dt;
+      const bearingRad = THREE.MathUtils.degToRad(bearing);
+      const pitchRad = THREE.MathUtils.degToRad(pitch);
+      const forwardX = Math.sin(bearingRad) * Math.cos(pitchRad);
+      const forwardY = Math.cos(bearingRad) * Math.cos(pitchRad);
+      const forwardZ = Math.sin(pitchRad);
+      const rightX = Math.cos(bearingRad);
+      const rightY = -Math.sin(bearingRad);
+
+      if (activeKeys.has("KeyW")) {
+        x += forwardX * moveStep;
+        y += forwardY * moveStep;
+        z += forwardZ * moveStep;
+      }
+      if (activeKeys.has("KeyS")) {
+        x -= forwardX * moveStep;
+        y -= forwardY * moveStep;
+        z -= forwardZ * moveStep;
+      }
+      if (activeKeys.has("KeyD")) {
+        x += rightX * moveStep;
+        y += rightY * moveStep;
+      }
+      if (activeKeys.has("KeyA")) {
+        x -= rightX * moveStep;
+        y -= rightY * moveStep;
+      }
+      if (activeKeys.has("KeyR")) {
+        z += moveStep;
+      }
+      if (activeKeys.has("KeyF")) {
+        z -= moveStep;
+      }
+
+      const hasPositionChange = x !== x0 || y !== y0 || z !== z0;
+      const hasOrientationChange = bearing !== current.bearing || pitch !== current.pitch;
+      if (hasPositionChange || hasOrientationChange) {
+        setFpViewState({
+          position: [x, y, z],
+          bearing,
+          pitch,
+        });
+      }
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextInputTarget(event.target)) {
+        return;
+      }
+      if (!trackedKeys.has(event.code)) {
+        return;
+      }
+      event.preventDefault();
+      activeKeys.add(event.code);
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (!trackedKeys.has(event.code)) {
+        return;
+      }
+      event.preventDefault();
+      activeKeys.delete(event.code);
+    };
+
+    const onBlur = () => {
+      activeKeys.clear();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    rafId = window.requestAnimationFrame(tick);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [isFirstPerson, movementSpeed, setFpViewState]);
 
   return (
     <div ref={ref} className="app-root">
@@ -96,7 +259,9 @@ export function App() {
       >
         <RendererInfo onInfo={setRendererType} />
         <TerrainScene
-          viewState={viewState}
+          mapViewState={mapViewState}
+          fpViewState={fpViewState}
+          mode={mode}
           viewportSize={size}
           tiles={tileRecords}
           heightScale={HEIGHT_SCALE}
@@ -120,10 +285,15 @@ export function App() {
           useDevicePixels={1}
           deviceProps={{ type: "webgl", webgl: { alpha: true, premultipliedAlpha: true } }}
           layers={layers}
-          controller={true}
-          viewState={viewState}
+          views={isFirstPerson ? fpView : undefined}
+          controller={isFirstPerson ? undefined : true}
+          viewState={isFirstPerson ? fpViewState : mapViewState}
           onViewStateChange={({ viewState: nextViewState }) => {
-            setViewState(nextViewState as Partial<MapViewState>);
+            if (isFirstPerson) {
+              setFpViewState(nextViewState as Partial<FirstPersonViewState>);
+            } else {
+              setMapViewState(nextViewState as Partial<MapViewState>);
+            }
           }}
         />
       </div>
@@ -132,6 +302,37 @@ export function App() {
         <div>Renderer: {rendererType}</div>
         <div>Tiles ready: {tileRecords.filter((tile) => tile.status === "ready").length}</div>
         <div>Tiles loading/error: {tileRecords.filter((tile) => tile.status !== "ready").length}</div>
+
+        <button
+          className="mode-toggle"
+          onClick={() => setMode(isFirstPerson ? "map" : "firstPerson")}
+          type="button"
+        >
+          {isFirstPerson ? "Switch to Map" : "Switch to First Person"}
+        </button>
+
+        {isFirstPerson && (
+          <div className="fp-hint">
+            WASD: move &middot; R/F: up/down &middot; Arrows: look &middot; Mouse: look
+            <label className="speed-control">
+              Move speed:
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={movementSpeed}
+                onChange={(e) => {
+                  const value = Number.parseFloat(e.target.value);
+                  if (!Number.isFinite(value)) {
+                    return;
+                  }
+                  setMovementSpeed(Math.max(1, value));
+                }}
+              />
+            </label>
+          </div>
+        )}
+
         {DEBUG_VIS ? (
           <div className="debug-panel">
             <div className="debug-title">Debug Vis</div>

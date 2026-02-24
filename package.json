@@ -12,6 +12,7 @@
     "@deck.gl/core": "^9.2.2",
     "@deck.gl/geo-layers": "^9.2.2",
     "@deck.gl/react": "^9.2.2",
+    "@math.gl/web-mercator": "^4.1.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.3.0",
     "react": "^19.1.0",

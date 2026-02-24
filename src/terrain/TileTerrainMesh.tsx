@@ -9,11 +9,12 @@ import type { DebugVisState } from "../debugVis";
 
 type TileTerrainMeshProps = {
   tile: TileRecord;
-  viewState: MapViewState;
+  viewState: MapViewState | { longitude: number; latitude: number };
   viewportSize: TileSize;
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
+  zoomOverride?: number;
 };
 
 function lodSegments(zoom: number): number {
@@ -23,15 +24,15 @@ function lodSegments(zoom: number): number {
   return 128;
 }
 
-export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams }: TileTerrainMeshProps) {
+export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride }: TileTerrainMeshProps) {
   const hasLoggedRef = useRef(false);
   const worldBounds = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, tile.index),
-    [tile.index, viewState, viewportSize],
+    () => tileToWorldBounds(viewState, viewportSize, tile.index, zoomOverride),
+    [tile.index, viewState, viewportSize, zoomOverride],
   );
   const worldUnitsPerMeter = useMemo(
-    () => metersToWorldScale(viewState, viewportSize),
-    [viewState, viewportSize],
+    () => metersToWorldScale(viewState, viewportSize, zoomOverride),
+    [viewState, viewportSize, zoomOverride],
   );
   const lngLatBounds = useMemo(() => tileToLngLatBounds(tile.index), [tile.index]);
 
