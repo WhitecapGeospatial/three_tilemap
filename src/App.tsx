@@ -82,14 +82,21 @@ const fpView = new FirstPersonView({
   } as FirstPersonView["props"]["controller"],
   fovy: 75,
   near: 0.1,
-  far: 100000,
+  far: 5_000_000,
 });
 
-const DEFAULT_MOVEMENT_SPEED = 50;
+const DEFAULT_MOVEMENT_SPEED = 50000;
 const LOOK_SPEED_DEG_PER_SECOND = 90;
+const MAX_MERCATOR_LATITUDE = 85.051129;
+const FP_NEAR = 0.1;
+const FP_FAR = 5_000_000;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function wrapLongitude(longitude: number) {
+  return ((((longitude + 180) % 360) + 360) % 360) - 180;
 }
 
 function isTextInputTarget(target: EventTarget | null) {
@@ -176,8 +183,8 @@ export function App() {
         width: 1,
         height: 1,
         fovy: 75,
-        near: 0.1,
-        far: 1_000_000_000_000,
+        near: FP_NEAR,
+        far: FP_FAR,
       });
       const view = new THREE.Matrix4().fromArray(viewport.viewMatrix);
       const world = new THREE.Matrix4().copy(view).invert();
@@ -218,8 +225,30 @@ export function App() {
       const hasPositionChange = x !== x0 || y !== y0 || z !== z0;
       const hasOrientationChange = bearing !== current.bearing || pitch !== current.pitch;
       if (hasPositionChange || hasOrientationChange) {
-        setFpViewState({
+        const nextViewport = new FirstPersonViewport({
+          longitude: current.longitude,
+          latitude: current.latitude,
           position: [x, y, z],
+          bearing,
+          pitch,
+          width: 1,
+          height: 1,
+          fovy: 75,
+          near: FP_NEAR,
+          far: FP_FAR,
+        });
+        const cameraWorld = nextViewport.cameraPosition as [number, number, number];
+        const [nextLng, nextLat, nextAlt] = nextViewport.unprojectPosition(cameraWorld);
+        const safeLng = Number.isFinite(nextLng) ? wrapLongitude(nextLng) : current.longitude;
+        const safeLat = Number.isFinite(nextLat)
+          ? clamp(nextLat, -MAX_MERCATOR_LATITUDE, MAX_MERCATOR_LATITUDE)
+          : current.latitude;
+        const safeAlt = Number.isFinite(nextAlt) ? nextAlt : z;
+
+        setFpViewState({
+          longitude: safeLng,
+          latitude: safeLat,
+          position: [0, 0, safeAlt],
           bearing,
           pitch,
         });

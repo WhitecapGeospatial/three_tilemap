@@ -8,6 +8,9 @@ import type { TileRecord } from "./types";
 import { TileTerrainMesh } from "./TileTerrainMesh";
 import type { DebugVisState } from "../debugVis";
 
+const FP_NEAR = 0.1;
+const FP_FAR = 5_000_000;
+
 type TerrainSceneProps = {
   mapViewState: MapViewState;
   fpViewState: FirstPersonViewState;
@@ -34,8 +37,8 @@ function makeViewport(
       width: w,
       height: h,
       fovy: 75,
-      near: 0.1,
-      far: 100000,
+      near: FP_NEAR,
+      far: FP_FAR,
     });
   }
 
