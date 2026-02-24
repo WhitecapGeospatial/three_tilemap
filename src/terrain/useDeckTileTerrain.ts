@@ -1,12 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TileLayer } from "@deck.gl/geo-layers";
 import * as THREE from "three";
 import type { DemDecodeParams, TileIndex } from "../types";
-import type { TileRecord } from "./types";
+import type { TileRecord, EdgeRecord, CornerPatchRecord } from "./types";
 
 const DEM_ENDPOINT =
   "https://cogserver-staging-myzvqet7ua-uw.a.run.app/get_rgb_tile/{z}/{x}/{y}.png?dataset=GlobalTopoBath.tif";
-  // "https://api.maptiler.com/tiles/ocean-rgb/{z}/{x}/{y}.webp?key=iN7qgGinNxGHRLUk5Apg&mtsid=07f4a282-f31e-4612-9b51-2ac93f9589e6";
 const IMAGERY_ENDPOINT =
   "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
@@ -27,18 +26,6 @@ function buildImageryUrl(index: TileIndex): string {
 }
 
 type TileTextures = { demTexture: THREE.Texture; imageryTexture: THREE.Texture };
-type UseDeckTileTerrainOptions = {
-  dropAncestorsOnLoad?: boolean;
-  dropDescendantsOnLoad?: boolean;
-};
-type DeckTileNode = {
-  index: TileIndex;
-  data?: TileTextures;
-  parent?: DeckTileNode | null;
-  children?: DeckTileNode[] | null;
-  isVisible?: boolean;
-  isSelected?: boolean;
-};
 
 async function loadTileTextures(index: TileIndex): Promise<TileTextures> {
   const loader = new THREE.TextureLoader();
@@ -47,8 +34,6 @@ async function loadTileTextures(index: TileIndex): Promise<TileTextures> {
     loader.loadAsync(buildImageryUrl(index)),
   ]);
 
-  // Raw data texture — no colour-space conversion so RGB byte values are
-  // preserved exactly for elevation decoding in the vertex shader.
   demTexture.flipY = true;
   demTexture.colorSpace = THREE.NoColorSpace;
   demTexture.minFilter = THREE.LinearFilter;
@@ -66,58 +51,27 @@ async function loadTileTextures(index: TileIndex): Promise<TileTextures> {
   return { demTexture, imageryTexture };
 }
 
-function isAncestorTile(ancestor: TileIndex, candidate: TileIndex): boolean {
-  if (ancestor.z >= candidate.z) return false;
-  const dz = candidate.z - ancestor.z;
-  return (candidate.x >> dz) === ancestor.x && (candidate.y >> dz) === ancestor.y;
-}
-
-function isSameTile(a: TileIndex, b: TileIndex): boolean {
-  return a.z === b.z && a.x === b.x && a.y === b.y;
-}
-
-function visibleImmediateChildIds(parent: DeckTileNode | undefined): string[] {
-  if (!parent?.children?.length) return [];
-
-  const immediateChildren = parent.children.filter(
-    (child) => child.index.z === parent.index.z + 1,
-  );
-  if (!immediateChildren.length) return [];
-
-  const hasVisibilityHints = immediateChildren.some(
-    (child) =>
-      typeof child.isVisible === "boolean" ||
-      typeof child.isSelected === "boolean",
-  );
-
-  return immediateChildren
-    .filter((child) =>
-      hasVisibilityHints ? Boolean(child.isVisible || child.isSelected) : true,
-    )
-    .map((child) => tileId(child.index));
-}
-
 export function useDeckTileTerrain(
   decodeParams: DemDecodeParams,
-  options?: UseDeckTileTerrainOptions,
+  fixedZoom: number,
 ): {
   layer: TileLayer;
   tileRecords: TileRecord[];
+  edgeRecords: EdgeRecord[];
+  cornerRecords: CornerPatchRecord[];
   decodeParams: DemDecodeParams;
 } {
-  const { dropAncestorsOnLoad = true, dropDescendantsOnLoad = true } = options ?? {};
   const [tileMap, setTileMap] = useState<Record<string, TileRecord>>({});
   const aliveIds = useRef(new Set<string>());
+  const disposalQueue = useRef<THREE.Texture[]>([]);
 
   const onTileUnload = useCallback((tile: { index: TileIndex }) => {
     const id = tileId(tile.index);
     aliveIds.current.delete(id);
-
-    // Don't dispose GPU resources here — TileTerrainMesh owns them and will
-    // dispose in its own cleanup effect after it has been removed from the
-    // Three scene graph.  Disposing here while the mesh is still mounted
-    // causes "Invalid value used as weak map key" in Three's WebGPU backend.
     setTileMap((prev) => {
+      const rec = prev[id];
+      if (rec?.demTexture) disposalQueue.current.push(rec.demTexture);
+      if (rec?.imageryTexture) disposalQueue.current.push(rec.imageryTexture);
       const next = { ...prev };
       delete next[id];
       return next;
@@ -125,7 +79,7 @@ export function useDeckTileTerrain(
   }, []);
 
   const onTileLoad = useCallback(
-    (tile: DeckTileNode) => {
+    (tile: { index: TileIndex; data?: TileTextures }) => {
       const id = tileId(tile.index);
       aliveIds.current.add(id);
 
@@ -150,39 +104,20 @@ export function useDeckTileTerrain(
           demTexture,
           lastUsed: performance.now(),
         };
-
-        for (const [existingId, existing] of Object.entries(next)) {
-          if (existingId === id) continue;
-
-          if (dropAncestorsOnLoad && isAncestorTile(existing.index, tile.index)) {
-            const incomingParent = tile.parent;
-            const isIncomingDirectParent =
-              incomingParent && isSameTile(existing.index, incomingParent.index);
-
-            if (isIncomingDirectParent) {
-              const requiredVisibleChildIds = visibleImmediateChildIds(incomingParent);
-              const missingVisibleChildren = requiredVisibleChildIds.some(
-                (childId) => !next[childId],
-              );
-
-              // Keep parent as fallback until every visible direct child is ready.
-              if (missingVisibleChildren) continue;
-            }
-
-            delete next[existingId];
-            continue;
-          }
-
-          if (dropDescendantsOnLoad && isAncestorTile(tile.index, existing.index)) {
-            delete next[existingId];
-          }
-        }
-
         return next;
       });
     },
-    [dropAncestorsOnLoad, dropDescendantsOnLoad],
+    [],
   );
+
+  // Deferred texture disposal — flush after React has reconciled (meshes unmounted).
+  useEffect(() => {
+    if (!disposalQueue.current.length) return;
+    const handle = requestAnimationFrame(() => {
+      disposalQueue.current.splice(0).forEach((t) => t.dispose());
+    });
+    return () => cancelAnimationFrame(handle);
+  });
 
   const layer = useMemo(
     () =>
@@ -190,22 +125,50 @@ export function useDeckTileTerrain(
         id: "dem-imagery-loader",
         data: IMAGERY_ENDPOINT,
         tileSize: 256,
-        minZoom: 0,
-        maxZoom: 14,
+        minZoom: fixedZoom,
+        maxZoom: fixedZoom,
         maxRequests: 16,
         debounceTime: 50,
-        refinementStrategy: "best-available",
+        refinementStrategy: "no-overlap",
         renderSubLayers: () => null,
         getTileData: ({ index }: { index: TileIndex }) => loadTileTextures(index),
         onTileLoad,
         onTileUnload,
       }),
-    [onTileLoad, onTileUnload],
+    [fixedZoom, onTileLoad, onTileUnload],
   );
+
+  const { edgeRecords, cornerRecords } = useMemo(() => {
+    const ready = Object.values(tileMap).filter((t) => t.status === "ready");
+    const lookup = new Map(ready.map((t) => [t.id, t]));
+    const edges: EdgeRecord[] = [];
+    const corners: CornerPatchRecord[] = [];
+
+    for (const tile of ready) {
+      const { x, y, z } = tile.index;
+      const eastId = `${z}/${x + 1}/${y}`;
+      const southId = `${z}/${x}/${y + 1}`;
+      const seId = `${z}/${x + 1}/${y + 1}`;
+
+      const east = lookup.get(eastId);
+      const south = lookup.get(southId);
+      const se = lookup.get(seId);
+
+      if (east)
+        edges.push({ id: `edge-east-${tile.id}`, direction: "east", tileA: tile, tileB: east });
+      if (south)
+        edges.push({ id: `edge-south-${tile.id}`, direction: "south", tileA: tile, tileB: south });
+      if (east && south && se)
+        corners.push({ id: `corner-${tile.id}`, nw: tile, ne: east, sw: south, se });
+    }
+    return { edgeRecords: edges, cornerRecords: corners };
+  }, [tileMap]);
 
   return {
     layer,
     tileRecords: Object.values(tileMap),
+    edgeRecords,
+    cornerRecords,
     decodeParams,
   };
 }

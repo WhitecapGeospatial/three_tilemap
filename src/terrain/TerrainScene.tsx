@@ -4,12 +4,15 @@ import { getMeterZoom } from "@math.gl/web-mercator";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MapViewState, FirstPersonViewState, ViewMode, TileSize, DemDecodeParams } from "../types";
-import type { TileRecord } from "./types";
+import type { TileRecord, EdgeRecord, CornerPatchRecord } from "./types";
 import { TileTerrainMesh } from "./TileTerrainMesh";
+import { TileEdgeStripMesh } from "./TileEdgeStripMesh";
+import { TileCornerPatchMesh } from "./TileCornerPatchMesh";
 import type { DebugVisState } from "../debugVis";
 
 const FP_NEAR = 0.1;
 const FP_FAR = 5_000_000;
+const UV_INSET = 0.25;
 
 type TerrainSceneProps = {
   mapViewState: MapViewState;
@@ -17,6 +20,8 @@ type TerrainSceneProps = {
   mode: ViewMode;
   viewportSize: TileSize;
   tiles: TileRecord[];
+  edgeRecords: EdgeRecord[];
+  cornerRecords: CornerPatchRecord[];
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
@@ -162,6 +167,8 @@ export function TerrainScene({
   mode,
   viewportSize,
   tiles,
+  edgeRecords,
+  cornerRecords,
   heightScale,
   debug,
   decodeParams,
@@ -212,8 +219,35 @@ export function TerrainScene({
             debug={debug}
             decodeParams={decodeParams}
             zoomOverride={syntheticZoom}
+            uvInset={UV_INSET}
           />
         ))}
+      {edgeRecords.map((edge) => (
+        <TileEdgeStripMesh
+          key={edge.id}
+          edge={edge}
+          viewState={tileViewState}
+          viewportSize={viewportSize}
+          heightScale={heightScale}
+          debug={debug}
+          decodeParams={decodeParams}
+          zoomOverride={syntheticZoom}
+          uvInset={UV_INSET}
+        />
+      ))}
+      {cornerRecords.map((corner) => (
+        <TileCornerPatchMesh
+          key={corner.id}
+          corner={corner}
+          viewState={tileViewState}
+          viewportSize={viewportSize}
+          heightScale={heightScale}
+          debug={debug}
+          decodeParams={decodeParams}
+          zoomOverride={syntheticZoom}
+          uvInset={UV_INSET}
+        />
+      ))}
     </>
   );
 }

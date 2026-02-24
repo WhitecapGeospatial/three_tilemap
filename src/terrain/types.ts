@@ -12,3 +12,18 @@ export type TileRecord = {
   errorMessage?: string;
   lastUsed: number;
 };
+
+export type EdgeRecord = {
+  id: string;
+  direction: "east" | "south";
+  tileA: TileRecord;
+  tileB: TileRecord;
+};
+
+export type CornerPatchRecord = {
+  id: string;
+  nw: TileRecord;
+  ne: TileRecord;
+  sw: TileRecord;
+  se: TileRecord;
+};

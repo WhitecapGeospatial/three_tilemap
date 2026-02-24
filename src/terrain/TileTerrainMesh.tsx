@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import * as ThreeWebGPU from "three/webgpu";
-import { texture, uniform, vec3, float, positionLocal } from "three/tsl";
+import { texture, uniform, vec3, float, positionLocal, uv, vec2 } from "three/tsl";
 import type { DemDecodeParams, MapViewState, TileSize } from "../types";
 import type { TileRecord } from "./types";
 import { metersToWorldScale, tileToLngLatBounds, tileToWorldBounds } from "../utils/tileMath";
 import type { DebugVisState } from "../debugVis";
+
+const SEGMENTS = 32;
 
 type TileTerrainMeshProps = {
   tile: TileRecord;
@@ -15,16 +17,10 @@ type TileTerrainMeshProps = {
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
   zoomOverride?: number;
+  uvInset: number;
 };
 
-function lodSegments(zoom: number): number {
-  return 32
-  if (zoom <= 6) return 32;
-  if (zoom <= 10) return 64;
-  return 128;
-}
-
-export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride }: TileTerrainMeshProps) {
+export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride, uvInset }: TileTerrainMeshProps) {
   const hasLoggedRef = useRef(false);
   const worldBounds = useMemo(
     () => tileToWorldBounds(viewState, viewportSize, tile.index, zoomOverride),
@@ -36,45 +32,38 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
   );
   const lngLatBounds = useMemo(() => tileToLngLatBounds(tile.index), [tile.index]);
 
-  // Flat PlaneGeometry — the vertex shader node handles Z displacement on the GPU.
   const geometry = useMemo(() => {
-    const segments = lodSegments(tile.index.z);
-    const width = worldBounds.worldMaxX - worldBounds.worldMinX;
-    const height = worldBounds.worldMaxY - worldBounds.worldMinY;
-    return new THREE.PlaneGeometry(width, height, segments, segments);
+    const coreScale = 1 - 2 * uvInset;
+    const width = (worldBounds.worldMaxX - worldBounds.worldMinX) * coreScale;
+    const height = (worldBounds.worldMaxY - worldBounds.worldMinY) * coreScale;
+    return new THREE.PlaneGeometry(width, height, SEGMENTS, SEGMENTS);
   }, [
-    tile.index.z,
+    uvInset,
     worldBounds.worldMaxX,
     worldBounds.worldMaxY,
     worldBounds.worldMinX,
     worldBounds.worldMinY,
   ]);
 
-  // Create TSL node objects keyed to texture identity.  These are stable
-  // references — the compiled shader program stays alive; only the bound
-  // values change when uniforms are updated via .value assignments below.
   const nodes = useMemo(() => {
-    const demTexNode = texture(tile.demTexture!);
-    const imgTexNode = texture(tile.imageryTexture!);
+    const uvRange = float(1 - 2 * uvInset);
+    const uvOffset = float(uvInset);
+    const insetUV = vec2(uv().x.mul(uvRange).add(uvOffset), uv().y.mul(uvRange).add(uvOffset));
+
+    const demTexNode = texture(tile.demTexture!, insetUV);
+    const imgTexNode = texture(tile.imageryTexture!, insetUV);
     const uBase = uniform(decodeParams.base);
     const uInterval = uniform(decodeParams.interval);
     const uHeightScaleFactor = uniform(heightScale * debug.displacementScale * worldUnitsPerMeter);
-    // 0 = normal displacement, 1 = flatten to z=0
     const uFlattenTerrain = uniform(debug.flattenTerrain ? 1.0 : 0.0);
-    // 0 = imagery color, 1 = force white (for wireframe visibility)
     const uWireframeWhite = uniform(debug.wireframe ? 1.0 : 0.0);
     return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite };
-  // Recreate only when textures change (new tile). Scalar uniforms are kept
-  // in sync via the effects below; one-frame lag for those is imperceptible.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tile.demTexture, tile.imageryTexture]);
+  }, [tile.demTexture, tile.imageryTexture, uvInset]);
 
-  // Build the TSL node graph and material once per node set.
   const material = useMemo(() => {
     const { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite } = nodes;
 
-    // RGB terrain encoding: elevation = base + (R*256² + G*256 + B) * interval
-    // Texture channels arrive as [0,1]; multiply by 255 to recover byte values.
     const elevation = uBase.add(
       demTexNode.r.mul(255.0 * 65536.0)
         .add(demTexNode.g.mul(255.0 * 256.0))
@@ -82,7 +71,6 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
         .mul(uInterval),
     );
 
-    // Multiply by (1 - uFlattenTerrain): when flatten=1 → z=0, when flatten=0 → full elevation.
     const z = elevation.mul(uHeightScaleFactor).mul(float(1.0).sub(uFlattenTerrain));
     const color = imgTexNode.rgb.mul(float(1.0).sub(uWireframeWhite)).add(vec3(1.0, 1.0, 1.0).mul(uWireframeWhite));
 
@@ -100,7 +88,6 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
     nodes.uWireframeWhite.value = debug.wireframe ? 1.0 : 0.0;
   }, [nodes, debug.wireframe]);
 
-  // Keep dynamic uniforms in sync (these mutate node .value, no shader recompile).
   useEffect(() => {
     nodes.uHeightScaleFactor.value = heightScale * debug.displacementScale * worldUnitsPerMeter;
   }, [nodes, heightScale, debug.displacementScale, worldUnitsPerMeter]);
@@ -114,7 +101,6 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
     nodes.uInterval.value = decodeParams.interval;
   }, [nodes, decodeParams]);
 
-  // ── GPU resource ownership ──────────────────────────────────────────────
   useEffect(() => {
     return () => {
       geometry?.dispose();
@@ -127,16 +113,6 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
     };
   }, [material]);
 
-  useEffect(() => {
-    const img = tile.imageryTexture;
-    const dem = tile.demTexture;
-    return () => {
-      img?.dispose();
-      dem?.dispose();
-    };
-  }, [tile.imageryTexture, tile.demTexture]);
-
-  // ── Debug logging ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!geometry || hasLoggedRef.current || !debug.logTileBounds) return;
 

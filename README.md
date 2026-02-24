@@ -14,7 +14,7 @@ The two renderers are completely independent canvases, stacked via CSS. They nev
 └─────────────────────────────────┘
 ```
 
-ThreeJS renders the 3D terrain geometry. DeckGL renders nothing visible — its `TileLayer` has `renderSubLayers: () => null` — and exists solely as a **tile scheduler and interaction controller**.
+ThreeJS renders the 3D terrain geometry. DeckGL renders nothing visible — its `TileLayer` has `renderSubLayers: () => null` — and exists solely as a **tile scheduler and interaction controller**. The `TileLayer` is locked to a single fixed zoom level to enable seamless tile buffer strips.
 
 ## View Modes
 
@@ -98,6 +98,34 @@ The shared math layer differs slightly by mode:
 
 Because both sides ultimately express geometry in DeckGL's WebMercator world-space, tiles align with the camera in either mode.
 
+## Seamless Terrain via Tile Buffer Strips
+
+Tile boundaries are eliminated by splitting each tile into three piece types that share texture data from adjacent tiles. All pieces have identical world-space dimensions.
+
+### Geometry Model
+
+With `tileSize = 256` and `bufferPx = 128` (half the tile), each side of a tile is trimmed by 64px (`bufferPx / 2`). This yields:
+
+- **Core mesh** — the center 128x128 of the 256x256 tile (UV `[0.25, 0.75]` on both axes).
+- **Edge strip** — bridges two adjacent tiles. 64px from tile A's near edge + 64px from tile B's near edge = 128px total. Generated for east and south edges only (to avoid duplicates).
+- **Corner patch** — bridges four tiles at their shared corner. 64x64px from each tile.
+
+### Fixed Zoom
+
+The `TileLayer` is locked to a single zoom level (`fixedZoom`, currently 7). This eliminates LOD management and guarantees all tiles share the same z, which is required for the adjacency computations.
+
+### Shared Texture Ownership
+
+Because edge strips and corner patches reference textures from multiple tiles, texture disposal is centralized in `useDeckTileTerrain` via a deferred disposal queue. Individual mesh components do not dispose textures — they only dispose their own geometry and material.
+
+### Adjacency Computation
+
+`useDeckTileTerrain` derives `edgeRecords` and `cornerRecords` from the loaded `tileMap`. For each ready tile, it checks whether east (`x+1`), south (`y+1`), and southeast (`x+1, y+1`) neighbors exist. Edge records reference two `TileRecord`s; corner records reference four.
+
+### TSL Shaders
+
+All three mesh types use TSL (Three Shading Language) node materials with the same elevation decode formula (`base + (R*256^2 + G*256 + B) * interval`). Edge strips use `step(0.5, uv)` to select between two tiles' textures. Corner patches use two `step` nodes to select among four quadrants via `mix(mix(SW, SE, tx), mix(NW, NE, tx), ty)`.
+
 ## Data Flow Summary
 
 | Concern | Owner |
@@ -105,18 +133,23 @@ Because both sides ultimately express geometry in DeckGL's WebMercator world-spa
 | User interaction (pan / zoom / tilt / fly) | DeckGL controller (MapView or FirstPersonView) |
 | Viewport state | Zustand store (written by Deck callbacks + FP keyboard loop) |
 | Camera matrices (view + projection) | Computed from `WebMercatorViewport` or `FirstPersonViewport` each frame |
-| Tile scheduling / LOD decisions | DeckGL `TileLayer` |
+| Tile scheduling (fixed zoom) | DeckGL `TileLayer` with `minZoom === maxZoom` |
 | Tile texture loading (DEM + imagery) | ThreeJS `TextureLoader` (triggered by DeckGL callbacks) |
+| Adjacency computation | `useDeckTileTerrain` — derives edge/corner records from loaded tile map |
+| Texture disposal | Centralized deferred queue in `useDeckTileTerrain` |
 | 3D rendering | ThreeJS / React Three Fiber |
 
 ## Key Files
 
 | File | Role |
 |---|---|
-| `src/App.tsx` | Composes the two canvases; owns the DeckGL `onViewStateChange` handler; mode-conditional `FirstPersonView` / `MapView` |
+| `src/App.tsx` | Composes the two canvases; owns the DeckGL `onViewStateChange` handler; sets `FIXED_ZOOM` |
 | `src/types.ts` | `MapViewState`, `FirstPersonViewState`, `ViewMode` type definitions |
 | `src/store/viewStateStore.ts` | Zustand store holding both view states and the active mode |
-| `src/terrain/TerrainScene.tsx` | `DeckSyncedCamera` — per-frame matrix injection; `makeViewport` dispatches by mode |
-| `src/terrain/TileTerrainMesh.tsx` | ThreeJS mesh per tile; TSL vertex shader for DEM displacement |
-| `src/terrain/useDeckTileTerrain.ts` | DeckGL `TileLayer` wired to load Three textures; manages tile lifecycle |
+| `src/terrain/types.ts` | `TileRecord`, `EdgeRecord`, `CornerPatchRecord` type definitions |
+| `src/terrain/TerrainScene.tsx` | `DeckSyncedCamera` — per-frame matrix injection; renders core, edge, and corner meshes |
+| `src/terrain/TileTerrainMesh.tsx` | Core mesh per tile; TSL vertex shader for DEM displacement with UV inset |
+| `src/terrain/TileEdgeStripMesh.tsx` | Edge strip mesh bridging two adjacent tiles with dual-texture TSL shader |
+| `src/terrain/TileCornerPatchMesh.tsx` | Corner patch mesh bridging four tiles with quad-texture TSL shader |
+| `src/terrain/useDeckTileTerrain.ts` | Fixed-zoom `TileLayer`; manages tile lifecycle, shared texture disposal, and adjacency records |
 | `src/utils/tileMath.ts` | Converts tile indices → WebMercator world-space bounds; accepts `zoomOverride` for first-person mode |
