@@ -26,7 +26,7 @@ Standard DeckGL `MapView` with pan/zoom/tilt. Viewport state is a `MapViewState`
 
 ### First-Person Mode
 
-A free-flying `FirstPersonView` from `@deck.gl/core`. The camera hovers at a configurable altitude and moves through the scene using DeckGL's built-in `FirstPersonController`:
+A free-flying `FirstPersonView` from `@deck.gl/core`. Mouse look/zoom are handled by DeckGL's `FirstPersonController`, while keyboard movement is custom-mapped in `src/App.tsx`:
 
 | Input | Action |
 |---|---|
@@ -37,18 +37,21 @@ A free-flying `FirstPersonView` from `@deck.gl/core`. The camera hovers at a con
 | Mouse drag | Look around |
 | Scroll wheel | Zoom (move along facing direction) |
 
-Movement speed is controlled from the HUD (`Move speed`) and is applied only to translation (WASD/R/F), not turning speed. Pitch is clamped to ±89°.
+Movement speed is controlled from the HUD (`Move speed`) and is applied only to translation (WASD/R/F), not turning speed. Arrow-key turning speed is fixed. Pitch is clamped to ±89°.
 
-When switching modes, the store transfers longitude/latitude/bearing between the two view states so the camera stays anchored at the same geographic location.
+During first-person movement, state is continuously re-anchored so `longitude`/`latitude` stay in sync with the actual camera world position (rather than accumulating large local XY offsets). This keeps tile selection stable in FP mode.
+
+When switching modes, view-state conversion preserves camera position in world space so toggling Map ↔ First Person does not jump to an old center/anchor.
 
 ## Source of Truth for Viewport State
 
-**DeckGL is the sole source of truth for viewport/camera state.** The data flow is strictly unidirectional:
+The viewport/camera state lives in Zustand and is propagated down to both DeckGL and ThreeJS:
 
 ```
-User interaction (pan / zoom / tilt / fly)
-    → DeckGL controller (MapView or FirstPersonView)
+User interaction (pan / zoom / tilt / mouse look / keyboard fly)
+    → DeckGL controller and app keyboard loop
     → onViewStateChange callback
+    → setFpViewState/setMapViewState
     → Zustand viewStateStore
     → props down to TerrainScene + DeckGL
 ```
@@ -63,7 +66,7 @@ The Zustand store (`src/store/viewStateStore.ts`) holds both view states and a m
 }
 ```
 
-ThreeJS **never writes** to this store — it only reads from it.
+ThreeJS **never writes** to this store — it only reads from it for camera sync and tile mesh placement.
 
 ## ThreeJS Camera Synchronisation
 
@@ -100,7 +103,7 @@ Because both sides ultimately express geometry in DeckGL's WebMercator world-spa
 | Concern | Owner |
 |---|---|
 | User interaction (pan / zoom / tilt / fly) | DeckGL controller (MapView or FirstPersonView) |
-| Viewport state | Zustand store (written only by DeckGL) |
+| Viewport state | Zustand store (written by Deck callbacks + FP keyboard loop) |
 | Camera matrices (view + projection) | Computed from `WebMercatorViewport` or `FirstPersonViewport` each frame |
 | Tile scheduling / LOD decisions | DeckGL `TileLayer` |
 | Tile texture loading (DEM + imagery) | ThreeJS `TextureLoader` (triggered by DeckGL callbacks) |
