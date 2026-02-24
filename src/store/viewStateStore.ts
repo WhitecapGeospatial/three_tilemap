@@ -45,6 +45,9 @@ export const useViewStateStore = create<ViewStateStore>((set) => ({
             latitude: state.mapViewState.latitude,
             bearing: state.mapViewState.bearing,
             pitch: 0,
+            // Reset horizontal local offsets so first-person mode starts at the
+            // same geographic anchor as map mode.
+            position: [0, 0, state.fpViewState.position[2]],
           },
         };
       }

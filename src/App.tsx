@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
-import { FirstPersonView } from "@deck.gl/core";
+import { FirstPersonView, FirstPersonViewport } from "@deck.gl/core";
 import { Canvas, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MapViewState, FirstPersonViewState, TileSize } from "./types";
@@ -167,31 +167,46 @@ export function App() {
       pitch = clamp(pitch, minPitch, maxPitch);
 
       const moveStep = movementSpeed * dt;
-      const bearingRad = THREE.MathUtils.degToRad(bearing);
-      const pitchRad = THREE.MathUtils.degToRad(pitch);
-      const forwardX = Math.sin(bearingRad) * Math.cos(pitchRad);
-      const forwardY = Math.cos(bearingRad) * Math.cos(pitchRad);
-      const forwardZ = Math.sin(pitchRad);
-      const rightX = Math.cos(bearingRad);
-      const rightY = -Math.sin(bearingRad);
+      const viewport = new FirstPersonViewport({
+        longitude: current.longitude,
+        latitude: current.latitude,
+        position: current.position,
+        bearing,
+        pitch,
+        width: 1,
+        height: 1,
+        fovy: 75,
+        near: 0.1,
+        far: 1_000_000_000_000,
+      });
+      const view = new THREE.Matrix4().fromArray(viewport.viewMatrix);
+      const world = new THREE.Matrix4().copy(view).invert();
+      const right = new THREE.Vector3();
+      const up = new THREE.Vector3();
+      const localForward = new THREE.Vector3();
+      world.extractBasis(right, up, localForward);
+      const forward = localForward.multiplyScalar(-1).normalize();
+      right.normalize();
 
       if (activeKeys.has("KeyW")) {
-        x += forwardX * moveStep;
-        y += forwardY * moveStep;
-        z += forwardZ * moveStep;
+        x += forward.x * moveStep;
+        y += forward.y * moveStep;
+        z += forward.z * moveStep;
       }
       if (activeKeys.has("KeyS")) {
-        x -= forwardX * moveStep;
-        y -= forwardY * moveStep;
-        z -= forwardZ * moveStep;
+        x -= forward.x * moveStep;
+        y -= forward.y * moveStep;
+        z -= forward.z * moveStep;
       }
       if (activeKeys.has("KeyD")) {
-        x += rightX * moveStep;
-        y += rightY * moveStep;
+        x += right.x * moveStep;
+        y += right.y * moveStep;
+        z += right.z * moveStep;
       }
       if (activeKeys.has("KeyA")) {
-        x -= rightX * moveStep;
-        y -= rightY * moveStep;
+        x -= right.x * moveStep;
+        y -= right.y * moveStep;
+        z -= right.z * moveStep;
       }
       if (activeKeys.has("KeyR")) {
         z += moveStep;
