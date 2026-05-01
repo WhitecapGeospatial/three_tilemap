@@ -2,6 +2,26 @@
 
 A 3D terrain viewer that composites a ThreeJS scene on top of a DeckGL map, using DeckGL's WebMercator math to keep both renderers pixel-perfectly aligned. Supports both a standard map view and a free-flying first-person camera.
 
+## Terminology
+
+This project uses three distinct zoom concepts. Each has a single canonical name used consistently across code and documentation.
+
+| Term | Code variable | Meaning |
+|---|---|---|
+| **Tile zoom** | `tileZoom` / `TILE_ZOOM` | The fixed z-level at which all tile requests are made (currently **9**). Set once in `App.tsx` and passed to the `TileLayer` via `minZoom === maxZoom`. All tiles share this z, which is required for adjacency stitching. |
+| **Viewport zoom** | `mapViewState.zoom` | The interactive map-view zoom the user changes by scrolling. Controls visual framing in map mode. Does **not** affect which tiles are fetched. |
+| **Meter zoom** | `meterZoom` | A latitude-derived zoom computed via `getMeterZoom(latitude)` from `@math.gl/web-mercator`. Used only in first-person mode to construct a `WebMercatorViewport` for tile world-space placement, keeping `distanceScales` consistent even though the camera is driven by `FirstPersonViewport`. |
+
+Other key terms:
+
+- **`uvInset`** — fraction of each tile texture reserved as overlap margin on each side (currently **0.25**). This is the single parameter that controls the stitching geometry. With `uvInset = 0.25`, the center 50% of the texture is the core and each edge has a 25% buffer.
+- **Core mesh** — the center `(1 - 2 * uvInset)²` of a tile's texture, rendered as a displaced `PlaneGeometry`. One per loaded tile.
+- **Edge strip** — bridge geometry spanning two adjacent cores, sampling from both tiles' buffer margins. Generated for east and south edges only (to avoid duplicates).
+- **Corner patch** — bridge geometry at the junction of four tiles, sampling from all four tiles' corner margins.
+- **`TileRecord`** — one fetched tile: a pair of DEM + imagery textures loaded at `tileZoom`.
+- **`EdgeRecord`** / **`CornerPatchRecord`** — adjacency records derived from loaded tiles, referencing two or four `TileRecord`s respectively.
+- **`coreSpan`** — the non-buffer fraction of a tile: `1 - 2 * uvInset`. Used in geometry sizing and UV mapping.
+
 ## Architecture Overview
 
 The two renderers are completely independent canvases, stacked via CSS. They never share a WebGL context or canvas element.
@@ -14,7 +34,7 @@ The two renderers are completely independent canvases, stacked via CSS. They nev
 └─────────────────────────────────┘
 ```
 
-ThreeJS renders the 3D terrain geometry. DeckGL renders nothing visible — its `TileLayer` has `renderSubLayers: () => null` — and exists solely as a **tile scheduler and interaction controller**. The `TileLayer` is locked to a single fixed zoom level to enable seamless tile buffer strips.
+ThreeJS renders the 3D terrain geometry. DeckGL renders nothing visible — its `TileLayer` has `renderSubLayers: () => null` — and exists solely as a **tile scheduler and interaction controller**. The `TileLayer` is locked to a single `tileZoom` level to enable seamless tile stitching.
 
 ## View Modes
 
@@ -94,25 +114,71 @@ Both viewport types produce matrices in the same format, so the injection patter
 The shared math layer differs slightly by mode:
 
 - **Map mode**: `WebMercatorViewport` is used everywhere — for camera matrices and for tile geometry placement.
-- **First-person mode**: `FirstPersonViewport` drives the camera matrices. Tile geometry placement still uses `WebMercatorViewport` (via `tileMath.ts`), since `projectPosition` returns zoom-0 world coordinates independent of viewport type. A synthetic zoom from `getMeterZoom(latitude)` is passed to keep `distanceScales` consistent.
+- **First-person mode**: `FirstPersonViewport` drives the camera matrices. Tile geometry placement still uses `WebMercatorViewport` (via `tileMath.ts`), since `projectPosition` returns zoom-0 world coordinates independent of viewport type. `meterZoom` (from `getMeterZoom(latitude)`) is passed to keep `distanceScales` consistent.
 
 Because both sides ultimately express geometry in DeckGL's WebMercator world-space, tiles align with the camera in either mode.
 
-## Seamless Terrain via Tile Buffer Strips
+## Seamless Terrain via Tile Stitching
 
-Tile boundaries are eliminated by splitting each tile into three piece types that share texture data from adjacent tiles. All pieces have identical world-space dimensions.
+Tile boundaries are eliminated by splitting each tile into three geometry types that share texture data from adjacent tiles. Stitching is a purely client-side geometry concern — it re-samples textures that were already fetched for the core tiles and triggers **zero additional network requests**.
+
+### Requests vs Geometry
+
+Each tile request at `tileZoom` fetches a 256×256 DEM image and a 256×256 imagery image. These two textures become a single `TileRecord`. The stitching system then slices each `TileRecord`'s textures into geometry pieces using `uvInset`:
+
+```
+One tile request (z/x/y) at tileZoom
+         │
+         ▼
+   256×256 DEM + 256×256 imagery  →  TileRecord
+         │
+         ├── Core mesh:    samples UV [uvInset, 1-uvInset] on both axes
+         │                 (the center 50% of the texture)
+         │
+         └── Buffer zones: the outer uvInset (25%) on each side
+                           shared with neighbors to build:
+                           • Edge strips  (2 tiles' buffers)
+                           • Corner patches (4 tiles' buffers)
+```
+
+When four tiles meet at a corner, the geometry fits together like this:
+
+```
+     tile NW          tile NE
+  ┌──────────┬──┬──┬──────────┐
+  │          │EW│EW│          │
+  │   core   │A │B │   core   │
+  │          │  │  │          │
+  ├──────────┼──┼──┼──────────┤
+  │  edge-S  │NW│NE│  edge-S  │
+  │  (A top) │  │  │  (A top) │
+  ├──────────┼──┼──┼──────────┤
+  │  edge-S  │SW│SE│  edge-S  │
+  │  (B bot) │  │  │  (B bot) │
+  ├──────────┼──┼──┼──────────┤
+  │          │EW│EW│          │
+  │   core   │A │B │   core   │
+  │          │  │  │          │
+  └──────────┴──┴──┴──────────┘
+     tile SW          tile SE
+
+  EW = east-west edge strip
+  NW/NE/SW/SE = corner patch quadrants
+```
+
+The core, edge, and corner meshes tile the plane with no gaps and no overlaps. Every pixel of the original texture is rendered exactly once.
 
 ### Geometry Model
 
-With `tileSize = 256` and `bufferPx = 128` (half the tile), each side of a tile is trimmed by 64px (`bufferPx / 2`). This yields:
+With `uvInset = 0.25`, each tile's texture is split into a core and buffer margins. The core occupies UV `[uvInset, 1 - uvInset]` on both axes (the center 50% of the texture). The outer 25% on each side is the buffer zone shared with neighboring tiles. This yields three geometry types:
 
-- **Core mesh** — the center 128x128 of the 256x256 tile (UV `[0.25, 0.75]` on both axes).
-- **Edge strip** — bridges two adjacent tiles. 64px from tile A's near edge + 64px from tile B's near edge = 128px total. Generated for east and south edges only (to avoid duplicates).
-- **Corner patch** — bridges four tiles at their shared corner. 64x64px from each tile.
+- **Core mesh** — the center `(1 - 2 * uvInset)²` of the tile, sampling UV `[0.25, 0.75]` on both axes. One per loaded tile.
+- **Edge strip** — bridges two adjacent tiles across their shared buffer zones. `uvInset` fraction from tile A's near edge + `uvInset` fraction from tile B's near edge. Generated for east and south edges only (to avoid duplicates).
+- **Corner patch** — bridges four tiles at their shared corner, sampling the `uvInset × uvInset` corner region of each tile.
 
-### Fixed Zoom
+### Tile Zoom
 
-The `TileLayer` is locked to a single zoom level (`fixedZoom`, currently 7). This eliminates LOD management and guarantees all tiles share the same z, which is required for the adjacency computations.
+The `TileLayer` is locked to a single zoom level (`tileZoom`, currently 9). This eliminates LOD management and guarantees all tiles share the same z, which is required for the adjacency computations.
 
 ### Shared Texture Ownership
 
@@ -133,7 +199,7 @@ All three mesh types use TSL (Three Shading Language) node materials with the sa
 | User interaction (pan / zoom / tilt / fly) | DeckGL controller (MapView or FirstPersonView) |
 | Viewport state | Zustand store (written by Deck callbacks + FP keyboard loop) |
 | Camera matrices (view + projection) | Computed from `WebMercatorViewport` or `FirstPersonViewport` each frame |
-| Tile scheduling (fixed zoom) | DeckGL `TileLayer` with `minZoom === maxZoom` |
+| Tile scheduling (`tileZoom`) | DeckGL `TileLayer` with `minZoom === maxZoom === tileZoom` |
 | Tile texture loading (DEM + imagery) | ThreeJS `TextureLoader` (triggered by DeckGL callbacks) |
 | Adjacency computation | `useDeckTileTerrain` — derives edge/corner records from loaded tile map |
 | Texture disposal | Centralized deferred queue in `useDeckTileTerrain` |
@@ -143,7 +209,7 @@ All three mesh types use TSL (Three Shading Language) node materials with the sa
 
 | File | Role |
 |---|---|
-| `src/App.tsx` | Composes the two canvases; owns the DeckGL `onViewStateChange` handler; sets `FIXED_ZOOM` |
+| `src/App.tsx` | Composes the two canvases; owns the DeckGL `onViewStateChange` handler; sets `TILE_ZOOM` |
 | `src/types.ts` | `MapViewState`, `FirstPersonViewState`, `ViewMode` type definitions |
 | `src/store/viewStateStore.ts` | Zustand store holding both view states and the active mode |
 | `src/terrain/types.ts` | `TileRecord`, `EdgeRecord`, `CornerPatchRecord` type definitions |
@@ -151,5 +217,5 @@ All three mesh types use TSL (Three Shading Language) node materials with the sa
 | `src/terrain/TileTerrainMesh.tsx` | Core mesh per tile; TSL vertex shader for DEM displacement with UV inset |
 | `src/terrain/TileEdgeStripMesh.tsx` | Edge strip mesh bridging two adjacent tiles with dual-texture TSL shader |
 | `src/terrain/TileCornerPatchMesh.tsx` | Corner patch mesh bridging four tiles with quad-texture TSL shader |
-| `src/terrain/useDeckTileTerrain.ts` | Fixed-zoom `TileLayer`; manages tile lifecycle, shared texture disposal, and adjacency records |
-| `src/utils/tileMath.ts` | Converts tile indices → WebMercator world-space bounds; accepts `zoomOverride` for first-person mode |
+| `src/terrain/useDeckTileTerrain.ts` | `tileZoom`-locked `TileLayer`; manages tile lifecycle, shared texture disposal, and adjacency records |
+| `src/utils/tileMath.ts` | Converts tile indices → WebMercator world-space bounds; accepts `meterZoom` for first-person mode |

@@ -53,7 +53,7 @@ async function loadTileTextures(index: TileIndex): Promise<TileTextures> {
 
 export function useDeckTileTerrain(
   decodeParams: DemDecodeParams,
-  fixedZoom: number,
+  tileZoom: number,
 ): {
   layer: TileLayer;
   tileRecords: TileRecord[];
@@ -125,8 +125,8 @@ export function useDeckTileTerrain(
         id: "dem-imagery-loader",
         data: IMAGERY_ENDPOINT,
         tileSize: 256,
-        minZoom: fixedZoom,
-        maxZoom: fixedZoom,
+        minZoom: tileZoom,
+        maxZoom: tileZoom,
         maxRequests: 16,
         debounceTime: 50,
         refinementStrategy: "no-overlap",
@@ -135,7 +135,7 @@ export function useDeckTileTerrain(
         onTileLoad,
         onTileUnload,
       }),
-    [fixedZoom, onTileLoad, onTileUnload],
+    [tileZoom, onTileLoad, onTileUnload],
   );
 
   const { edgeRecords, cornerRecords } = useMemo(() => {

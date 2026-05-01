@@ -178,7 +178,7 @@ export function TerrainScene({
     return tiles.filter((tile) => tile.id === debug.singleTileId);
   }, [tiles, debug.singleTileId, debug.singleTileOnly]);
 
-  const syntheticZoom = useMemo(
+  const meterZoom = useMemo(
     () =>
       mode === "firstPerson" ? getMeterZoom({ latitude: fpViewState.latitude }) : undefined,
     [mode, fpViewState.latitude],
@@ -218,7 +218,7 @@ export function TerrainScene({
             heightScale={heightScale}
             debug={debug}
             decodeParams={decodeParams}
-            zoomOverride={syntheticZoom}
+            meterZoom={meterZoom}
             uvInset={UV_INSET}
           />
         ))}
@@ -231,7 +231,7 @@ export function TerrainScene({
           heightScale={heightScale}
           debug={debug}
           decodeParams={decodeParams}
-          zoomOverride={syntheticZoom}
+          meterZoom={meterZoom}
           uvInset={UV_INSET}
         />
       ))}
@@ -244,7 +244,7 @@ export function TerrainScene({
           heightScale={heightScale}
           debug={debug}
           decodeParams={decodeParams}
-          zoomOverride={syntheticZoom}
+          meterZoom={meterZoom}
           uvInset={UV_INSET}
         />
       ))}

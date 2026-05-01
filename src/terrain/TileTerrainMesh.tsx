@@ -16,26 +16,26 @@ type TileTerrainMeshProps = {
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
-  zoomOverride?: number;
+  meterZoom?: number;
   uvInset: number;
 };
 
-export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride, uvInset }: TileTerrainMeshProps) {
+export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileTerrainMeshProps) {
   const hasLoggedRef = useRef(false);
   const worldBounds = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, tile.index, zoomOverride),
-    [tile.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, tile.index, meterZoom),
+    [tile.index, viewState, viewportSize, meterZoom],
   );
   const worldUnitsPerMeter = useMemo(
-    () => metersToWorldScale(viewState, viewportSize, zoomOverride),
-    [viewState, viewportSize, zoomOverride],
+    () => metersToWorldScale(viewState, viewportSize, meterZoom),
+    [viewState, viewportSize, meterZoom],
   );
   const lngLatBounds = useMemo(() => tileToLngLatBounds(tile.index), [tile.index]);
 
   const geometry = useMemo(() => {
-    const coreScale = 1 - 2 * uvInset;
-    const width = (worldBounds.worldMaxX - worldBounds.worldMinX) * coreScale;
-    const height = (worldBounds.worldMaxY - worldBounds.worldMinY) * coreScale;
+    const coreSpan = 1 - 2 * uvInset;
+    const width = (worldBounds.worldMaxX - worldBounds.worldMinX) * coreSpan;
+    const height = (worldBounds.worldMaxY - worldBounds.worldMinY) * coreSpan;
     return new THREE.PlaneGeometry(width, height, SEGMENTS, SEGMENTS);
   }, [
     uvInset,

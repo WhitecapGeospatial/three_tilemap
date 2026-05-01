@@ -16,27 +16,27 @@ type TileCornerPatchMeshProps = {
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
-  zoomOverride?: number;
+  meterZoom?: number;
   uvInset: number;
 };
 
-export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride, uvInset }: TileCornerPatchMeshProps) {
+export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileCornerPatchMeshProps) {
   const boundsNW = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.nw.index, zoomOverride),
-    [corner.nw.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, corner.nw.index, meterZoom),
+    [corner.nw.index, viewState, viewportSize, meterZoom],
   );
   const boundsNE = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.ne.index, zoomOverride),
-    [corner.ne.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, corner.ne.index, meterZoom),
+    [corner.ne.index, viewState, viewportSize, meterZoom],
   );
   const boundsSW = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.sw.index, zoomOverride),
-    [corner.sw.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, corner.sw.index, meterZoom),
+    [corner.sw.index, viewState, viewportSize, meterZoom],
   );
 
   const worldUnitsPerMeter = useMemo(
-    () => metersToWorldScale(viewState, viewportSize, zoomOverride),
-    [viewState, viewportSize, zoomOverride],
+    () => metersToWorldScale(viewState, viewportSize, meterZoom),
+    [viewState, viewportSize, meterZoom],
   );
 
   const { patchWidth, patchHeight, centerX, centerY } = useMemo(() => {

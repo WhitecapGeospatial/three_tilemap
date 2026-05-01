@@ -16,22 +16,22 @@ type TileEdgeStripMeshProps = {
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
-  zoomOverride?: number;
+  meterZoom?: number;
   uvInset: number;
 };
 
-export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, debug, decodeParams, zoomOverride, uvInset }: TileEdgeStripMeshProps) {
+export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileEdgeStripMeshProps) {
   const boundsA = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, edge.tileA.index, zoomOverride),
-    [edge.tileA.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, edge.tileA.index, meterZoom),
+    [edge.tileA.index, viewState, viewportSize, meterZoom],
   );
   const boundsB = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, edge.tileB.index, zoomOverride),
-    [edge.tileB.index, viewState, viewportSize, zoomOverride],
+    () => tileToWorldBounds(viewState, viewportSize, edge.tileB.index, meterZoom),
+    [edge.tileB.index, viewState, viewportSize, meterZoom],
   );
   const worldUnitsPerMeter = useMemo(
-    () => metersToWorldScale(viewState, viewportSize, zoomOverride),
-    [viewState, viewportSize, zoomOverride],
+    () => metersToWorldScale(viewState, viewportSize, meterZoom),
+    [viewState, viewportSize, meterZoom],
   );
 
   const { stripWidth, stripHeight, centerX, centerY } = useMemo(() => {
@@ -68,7 +68,7 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
     const imgB = edge.tileB.imageryTexture!;
 
     const insetF = float(uvInset);
-    const coreRange = float(1 - 2 * uvInset);
+    const coreSpan = float(1 - 2 * uvInset);
 
     let demTexNode;
     let imgTexNode;
@@ -76,7 +76,7 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
     if (edge.direction === "east") {
       const t = step(float(0.5), uv().x);
       // v axis: same inset as core
-      const vy = uv().y.mul(coreRange).add(insetF);
+      const vy = uv().y.mul(coreSpan).add(insetF);
       // tile A: u [0, 0.5] -> UV_x [1-uvInset, 1.0]
       const uvA = vec2(uv().x.mul(float(2.0 * uvInset)).add(float(1 - uvInset)), vy);
       // tile B: u [0.5, 1.0] -> UV_x [0.0, uvInset]
@@ -88,7 +88,7 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
       // south: v is the bridging direction
       const t = step(float(0.5), uv().y);
       // u axis: same inset as core
-      const vx = uv().x.mul(coreRange).add(insetF);
+      const vx = uv().x.mul(coreSpan).add(insetF);
       // tile B (south, bottom half): v [0, 0.5] -> UV_y [1-uvInset, 1.0]
       const uvB = vec2(vx, uv().y.mul(float(2.0 * uvInset)).add(float(1 - uvInset)));
       // tile A (north, top half): v [0.5, 1.0] -> UV_y [0.0, uvInset]

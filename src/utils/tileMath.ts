@@ -41,9 +41,9 @@ type ViewStateWithZoom = {
 
 function toViewStateWithZoom(
   viewState: MapViewState | { longitude: number; latitude: number },
-  zoomOverride?: number,
+  meterZoom?: number,
 ): ViewStateWithZoom {
-  const zoom = zoomOverride ?? ("zoom" in viewState ? (viewState as MapViewState).zoom : 10);
+  const zoom = meterZoom ?? ("zoom" in viewState ? (viewState as MapViewState).zoom : 10);
   return {
     longitude: viewState.longitude,
     latitude: viewState.latitude,
@@ -57,9 +57,9 @@ export function tileToWorldBounds(
   viewState: MapViewState | { longitude: number; latitude: number },
   viewportSize: TileSize,
   index: TileIndex,
-  zoomOverride?: number,
+  meterZoom?: number,
 ): TileWorldBounds {
-  const vs = toViewStateWithZoom(viewState, zoomOverride);
+  const vs = toViewStateWithZoom(viewState, meterZoom);
   const viewport = new WebMercatorViewport({
     ...vs,
     width: Math.max(1, viewportSize.width),
@@ -88,9 +88,9 @@ export function tileToWorldBounds(
 export function metersToWorldScale(
   viewState: MapViewState | { longitude: number; latitude: number },
   viewportSize: TileSize,
-  zoomOverride?: number,
+  meterZoom?: number,
 ): number {
-  const vs = toViewStateWithZoom(viewState, zoomOverride);
+  const vs = toViewStateWithZoom(viewState, meterZoom);
   const viewport = new WebMercatorViewport({
     ...vs,
     width: Math.max(1, viewportSize.width),

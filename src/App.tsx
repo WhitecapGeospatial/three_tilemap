@@ -118,10 +118,10 @@ export function App() {
   const [debug, setDebug] = useState(DEFAULT_DEBUG_VIS_STATE);
   const [rendererType, setRendererType] = useState<string>("…");
   const [movementSpeed, setMovementSpeed] = useState(DEFAULT_MOVEMENT_SPEED);
-  const FIXED_ZOOM = 9;
+  const TILE_ZOOM = 9;
   const { layer, tileRecords, edgeRecords, cornerRecords, decodeParams } = useDeckTileTerrain(
     { base: -10000, interval: 0.1 },
-    FIXED_ZOOM,
+    TILE_ZOOM,
   );
 
   const layers = useMemo(() => [layer], [layer]);
