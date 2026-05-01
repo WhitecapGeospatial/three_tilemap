@@ -2,15 +2,14 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import * as ThreeWebGPU from "three/webgpu";
 import { texture, uniform, vec3, vec2, float, positionLocal, uv, mix, step } from "three/tsl";
-import type { DemDecodeParams, MapViewState, TileSize } from "../types";
-import type { EdgeRecord } from "./types";
+import type { DemDecodeParams, MapViewState, TileIndex, TileSize } from "../types";
+import type { RenderedEdgeRecord } from "./types";
 import { metersToWorldScale, tileToWorldBounds } from "../utils/tileMath";
 import type { DebugVisState } from "../debugVis";
 
-const SEGMENTS = 32;
-
 type TileEdgeStripMeshProps = {
-  edge: EdgeRecord;
+  edge: RenderedEdgeRecord;
+  maxRenderZoom: number;
   viewState: MapViewState | { longitude: number; latitude: number };
   viewportSize: TileSize;
   heightScale: number;
@@ -20,14 +19,17 @@ type TileEdgeStripMeshProps = {
   uvInset: number;
 };
 
-export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileEdgeStripMeshProps) {
+export function TileEdgeStripMesh({ edge, maxRenderZoom, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileEdgeStripMeshProps) {
+  const renderIndexA: TileIndex = { x: edge.tileA.renderIndex.x, y: edge.tileA.renderIndex.y, z: maxRenderZoom };
+  const renderIndexB: TileIndex = { x: edge.tileB.renderIndex.x, y: edge.tileB.renderIndex.y, z: maxRenderZoom };
+
   const boundsA = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, edge.tileA.index, meterZoom),
-    [edge.tileA.index, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, renderIndexA, meterZoom),
+    [renderIndexA.x, renderIndexA.y, renderIndexA.z, viewState, viewportSize, meterZoom],
   );
   const boundsB = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, edge.tileB.index, meterZoom),
-    [edge.tileB.index, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, renderIndexB, meterZoom),
+    [renderIndexB.x, renderIndexB.y, renderIndexB.z, viewState, viewportSize, meterZoom],
   );
   const worldUnitsPerMeter = useMemo(
     () => metersToWorldScale(viewState, viewportSize, meterZoom),
@@ -48,7 +50,6 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
         centerY: boundsA.centerY,
       };
     }
-    // south
     return {
       stripWidth: tileW_A * (1 - 2 * uvInset),
       stripHeight: uvInset * (tileH_A + tileH_B),
@@ -58,14 +59,25 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
   }, [boundsA, boundsB, edge.direction, uvInset]);
 
   const geometry = useMemo(() => {
-    return new THREE.PlaneGeometry(stripWidth, stripHeight, SEGMENTS, SEGMENTS);
-  }, [stripWidth, stripHeight]);
+    return new THREE.PlaneGeometry(stripWidth, stripHeight, edge.segments, edge.segments);
+  }, [stripWidth, stripHeight, edge.segments]);
+
+  const uvBoundsA = edge.tileA.source.uvBounds;
+  const uvBoundsB = edge.tileB.source.uvBounds;
 
   const nodes = useMemo(() => {
-    const demA = edge.tileA.demTexture!;
-    const demB = edge.tileB.demTexture!;
-    const imgA = edge.tileA.imageryTexture!;
-    const imgB = edge.tileB.imageryTexture!;
+    const demA = edge.tileA.source.requestTile.demTexture!;
+    const demB = edge.tileB.source.requestTile.demTexture!;
+    const imgA = edge.tileA.source.requestTile.imageryTexture!;
+    const imgB = edge.tileB.source.requestTile.imageryTexture!;
+
+    const uvMinA = vec2(float(uvBoundsA.uMin), float(uvBoundsA.vMin));
+    const uvMaxA = vec2(float(uvBoundsA.uMax), float(uvBoundsA.vMax));
+    const uvSizeA = uvMaxA.sub(uvMinA);
+
+    const uvMinB = vec2(float(uvBoundsB.uMin), float(uvBoundsB.vMin));
+    const uvMaxB = vec2(float(uvBoundsB.uMax), float(uvBoundsB.vMax));
+    const uvSizeB = uvMaxB.sub(uvMinB);
 
     const insetF = float(uvInset);
     const coreSpan = float(1 - 2 * uvInset);
@@ -75,24 +87,25 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
 
     if (edge.direction === "east") {
       const t = step(float(0.5), uv().x);
-      // v axis: same inset as core
-      const vy = uv().y.mul(coreSpan).add(insetF);
-      // tile A: u [0, 0.5] -> UV_x [1-uvInset, 1.0]
-      const uvA = vec2(uv().x.mul(float(2.0 * uvInset)).add(float(1 - uvInset)), vy);
-      // tile B: u [0.5, 1.0] -> UV_x [0.0, uvInset]
-      const uvB = vec2(uv().x.sub(0.5).mul(float(2.0 * uvInset)), vy);
+      const vyNorm = uv().y.mul(coreSpan).add(insetF);
+
+      const localAxNorm = uv().x.mul(float(2.0 * uvInset)).add(float(1 - uvInset));
+      const uvA = uvMinA.add(vec2(uvSizeA.x.mul(localAxNorm), uvSizeA.y.mul(vyNorm)));
+
+      const localBxNorm = uv().x.sub(0.5).mul(float(2.0 * uvInset));
+      const uvB = uvMinB.add(vec2(uvSizeB.x.mul(localBxNorm), uvSizeB.y.mul(vyNorm)));
 
       demTexNode = mix(texture(demA, uvA), texture(demB, uvB), t);
       imgTexNode = mix(texture(imgA, uvA), texture(imgB, uvB), t);
     } else {
-      // south: v is the bridging direction
       const t = step(float(0.5), uv().y);
-      // u axis: same inset as core
-      const vx = uv().x.mul(coreSpan).add(insetF);
-      // tile B (south, bottom half): v [0, 0.5] -> UV_y [1-uvInset, 1.0]
-      const uvB = vec2(vx, uv().y.mul(float(2.0 * uvInset)).add(float(1 - uvInset)));
-      // tile A (north, top half): v [0.5, 1.0] -> UV_y [0.0, uvInset]
-      const uvA = vec2(vx, uv().y.sub(0.5).mul(float(2.0 * uvInset)));
+      const vxNorm = uv().x.mul(coreSpan).add(insetF);
+
+      const localByNorm = uv().y.mul(float(2.0 * uvInset)).add(float(1 - uvInset));
+      const uvB = uvMinB.add(vec2(uvSizeB.x.mul(vxNorm), uvSizeB.y.mul(localByNorm)));
+
+      const localAyNorm = uv().y.sub(0.5).mul(float(2.0 * uvInset));
+      const uvA = uvMinA.add(vec2(uvSizeA.x.mul(vxNorm), uvSizeA.y.mul(localAyNorm)));
 
       demTexNode = mix(texture(demB, uvB), texture(demA, uvA), t);
       imgTexNode = mix(texture(imgB, uvB), texture(imgA, uvA), t);
@@ -107,8 +120,10 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
     return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    edge.tileA.demTexture, edge.tileA.imageryTexture,
-    edge.tileB.demTexture, edge.tileB.imageryTexture,
+    edge.tileA.source.requestTile.demTexture, edge.tileA.source.requestTile.imageryTexture,
+    edge.tileB.source.requestTile.demTexture, edge.tileB.source.requestTile.imageryTexture,
+    uvBoundsA.uMin, uvBoundsA.vMin, uvBoundsA.uMax, uvBoundsA.vMax,
+    uvBoundsB.uMin, uvBoundsB.vMin, uvBoundsB.uMax, uvBoundsB.vMax,
     edge.direction, uvInset,
   ]);
 
@@ -131,39 +146,17 @@ export function TileEdgeStripMesh({ edge, viewState, viewportSize, heightScale, 
     return mat;
   }, [nodes]);
 
-  useEffect(() => {
-    material.wireframe = debug.wireframe;
-  }, [material, debug.wireframe]);
+  useEffect(() => { material.wireframe = debug.wireframe; }, [material, debug.wireframe]);
+  useEffect(() => { nodes.uWireframeWhite.value = debug.wireframe ? 1.0 : 0.0; }, [nodes, debug.wireframe]);
+  useEffect(() => { nodes.uHeightScaleFactor.value = heightScale * debug.displacementScale * worldUnitsPerMeter; }, [nodes, heightScale, debug.displacementScale, worldUnitsPerMeter]);
+  useEffect(() => { nodes.uFlattenTerrain.value = debug.flattenTerrain ? 1.0 : 0.0; }, [nodes, debug.flattenTerrain]);
+  useEffect(() => { nodes.uBase.value = decodeParams.base; nodes.uInterval.value = decodeParams.interval; }, [nodes, decodeParams]);
+  useEffect(() => { return () => { geometry?.dispose(); }; }, [geometry]);
+  useEffect(() => { return () => { material.dispose(); }; }, [material]);
 
-  useEffect(() => {
-    nodes.uWireframeWhite.value = debug.wireframe ? 1.0 : 0.0;
-  }, [nodes, debug.wireframe]);
-
-  useEffect(() => {
-    nodes.uHeightScaleFactor.value = heightScale * debug.displacementScale * worldUnitsPerMeter;
-  }, [nodes, heightScale, debug.displacementScale, worldUnitsPerMeter]);
-
-  useEffect(() => {
-    nodes.uFlattenTerrain.value = debug.flattenTerrain ? 1.0 : 0.0;
-  }, [nodes, debug.flattenTerrain]);
-
-  useEffect(() => {
-    nodes.uBase.value = decodeParams.base;
-    nodes.uInterval.value = decodeParams.interval;
-  }, [nodes, decodeParams]);
-
-  useEffect(() => {
-    return () => { geometry?.dispose(); };
-  }, [geometry]);
-
-  useEffect(() => {
-    return () => { material.dispose(); };
-  }, [material]);
-
-  if (!edge.tileA.demTexture || !edge.tileA.imageryTexture ||
-      !edge.tileB.demTexture || !edge.tileB.imageryTexture) {
-    return null;
-  }
+  const aReady = edge.tileA.source.requestTile.demTexture && edge.tileA.source.requestTile.imageryTexture;
+  const bReady = edge.tileB.source.requestTile.demTexture && edge.tileB.source.requestTile.imageryTexture;
+  if (!aReady || !bReady) return null;
 
   return (
     <group position={[centerX, centerY, 0]}>

@@ -105,3 +105,248 @@ body,
   background: #08101e;
   color: #e8eeff;
 }
+
+/* ── Tile Info Panel (top-right) ── */
+
+.tile-info-panel {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 10;
+  background: rgb(10 15 26 / 80%);
+  color: #e8eeff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 320px;
+  backdrop-filter: blur(6px);
+}
+
+.tile-info-section {
+  padding: 4px 0;
+}
+
+.tile-info-section + .tile-info-section {
+  border-top: 1px solid rgb(65 80 111 / 50%);
+  margin-top: 4px;
+}
+
+.tile-info-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8899bb;
+}
+
+.tile-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.tile-info-row-indent {
+  padding-left: 10px;
+}
+
+.tile-info-label {
+  color: #8899bb;
+  flex-shrink: 0;
+}
+
+.tile-info-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tile-info-mono {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 11px;
+}
+
+.tile-info-ready {
+  color: #6be67b;
+}
+
+.tile-info-loading {
+  color: #f0c457;
+}
+
+.tile-info-error {
+  color: #f06060;
+}
+
+.tile-info-fallback {
+  color: #f0c457;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.tile-info-hint {
+  padding: 4px 0 2px;
+  color: #5a6a88;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.tile-info-selected {
+  background: rgb(0 255 255 / 5%);
+  border-radius: 4px;
+  padding: 6px;
+  margin-top: 4px;
+}
+
+.tile-info-sub {
+  margin-top: 2px;
+  display: grid;
+  gap: 2px;
+}
+
+.tile-info-zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.tile-info-zoom-label {
+  color: #8899bb;
+  width: 24px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.tile-info-zoom-bar {
+  flex: 1;
+  height: 4px;
+  background: rgb(65 80 111 / 40%);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tile-info-zoom-fill {
+  display: block;
+  height: 100%;
+  background: #4e8cff;
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.tile-info-zoom-count {
+  width: 24px;
+  text-align: right;
+  font-size: 11px;
+  color: #a0b0cc;
+}
+
+/* ── Tile List ── */
+
+.tile-list-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(65 80 111 / 60%) transparent;
+}
+
+.tile-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 3px;
+  background: rgb(20 28 44 / 60%);
+  color: #c0ccee;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.tile-list-item:hover {
+  background: rgb(40 55 85 / 80%);
+}
+
+.tile-list-item-active {
+  background: rgb(0 255 255 / 12%);
+  color: #00ffff;
+  outline: 1px solid rgb(0 255 255 / 30%);
+}
+
+.tile-list-item-active:hover {
+  background: rgb(0 255 255 / 18%);
+}
+
+.tile-list-item-id {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-list-item-zoom {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #8899bb;
+}
+
+/* ── Source Tiles ── */
+
+.tile-info-sources {
+  margin-top: 6px;
+  display: grid;
+  gap: 2px;
+}
+
+.tile-info-sources-label {
+  color: #8899bb;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.tile-info-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgb(20 28 44 / 60%);
+  font-size: 11px;
+  color: #c0ccee;
+}
+
+.tile-info-source-active {
+  background: rgb(0 255 255 / 8%);
+  outline: 1px solid rgb(0 255 255 / 20%);
+}
+
+.tile-info-source-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #00ffff;
+  background: rgb(0 255 255 / 12%);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+
+.tile-info-hint {
+  color: #556688;
+  font-size: 11px;
+  font-style: italic;
+  padding: 2px 6px;
+}

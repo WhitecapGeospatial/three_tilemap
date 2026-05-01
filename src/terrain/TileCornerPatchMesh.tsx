@@ -2,15 +2,14 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import * as ThreeWebGPU from "three/webgpu";
 import { texture, uniform, vec3, vec2, float, positionLocal, uv, mix, step } from "three/tsl";
-import type { DemDecodeParams, MapViewState, TileSize } from "../types";
-import type { CornerPatchRecord } from "./types";
+import type { DemDecodeParams, MapViewState, TileIndex, TileSize } from "../types";
+import type { RenderedCornerRecord } from "./types";
 import { metersToWorldScale, tileToWorldBounds } from "../utils/tileMath";
 import type { DebugVisState } from "../debugVis";
 
-const SEGMENTS = 32;
-
 type TileCornerPatchMeshProps = {
-  corner: CornerPatchRecord;
+  corner: RenderedCornerRecord;
+  maxRenderZoom: number;
   viewState: MapViewState | { longitude: number; latitude: number };
   viewportSize: TileSize;
   heightScale: number;
@@ -20,20 +19,23 @@ type TileCornerPatchMeshProps = {
   uvInset: number;
 };
 
-export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileCornerPatchMeshProps) {
+export function TileCornerPatchMesh({ corner, maxRenderZoom, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset }: TileCornerPatchMeshProps) {
+  const riNW: TileIndex = { x: corner.nw.renderIndex.x, y: corner.nw.renderIndex.y, z: maxRenderZoom };
+  const riNE: TileIndex = { x: corner.ne.renderIndex.x, y: corner.ne.renderIndex.y, z: maxRenderZoom };
+  const riSW: TileIndex = { x: corner.sw.renderIndex.x, y: corner.sw.renderIndex.y, z: maxRenderZoom };
+
   const boundsNW = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.nw.index, meterZoom),
-    [corner.nw.index, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, riNW, meterZoom),
+    [riNW.x, riNW.y, riNW.z, viewState, viewportSize, meterZoom],
   );
   const boundsNE = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.ne.index, meterZoom),
-    [corner.ne.index, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, riNE, meterZoom),
+    [riNE.x, riNE.y, riNE.z, viewState, viewportSize, meterZoom],
   );
   const boundsSW = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, corner.sw.index, meterZoom),
-    [corner.sw.index, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, riSW, meterZoom),
+    [riSW.x, riSW.y, riSW.z, viewState, viewportSize, meterZoom],
   );
-
   const worldUnitsPerMeter = useMemo(
     () => metersToWorldScale(viewState, viewportSize, meterZoom),
     [viewState, viewportSize, meterZoom],
@@ -54,39 +56,46 @@ export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightSca
   }, [boundsNW, boundsNE, boundsSW, uvInset]);
 
   const geometry = useMemo(() => {
-    return new THREE.PlaneGeometry(patchWidth, patchHeight, SEGMENTS, SEGMENTS);
-  }, [patchWidth, patchHeight]);
+    return new THREE.PlaneGeometry(patchWidth, patchHeight, corner.segments, corner.segments);
+  }, [patchWidth, patchHeight, corner.segments]);
+
+  const uvbNW = corner.nw.source.uvBounds;
+  const uvbNE = corner.ne.source.uvBounds;
+  const uvbSW = corner.sw.source.uvBounds;
+  const uvbSE = corner.se.source.uvBounds;
 
   const nodes = useMemo(() => {
-    const demNW = corner.nw.demTexture!;
-    const demNE = corner.ne.demTexture!;
-    const demSW = corner.sw.demTexture!;
-    const demSE = corner.se.demTexture!;
-    const imgNW = corner.nw.imageryTexture!;
-    const imgNE = corner.ne.imageryTexture!;
-    const imgSW = corner.sw.imageryTexture!;
-    const imgSE = corner.se.imageryTexture!;
+    const demNW = corner.nw.source.requestTile.demTexture!;
+    const demNE = corner.ne.source.requestTile.demTexture!;
+    const demSW = corner.sw.source.requestTile.demTexture!;
+    const demSE = corner.se.source.requestTile.demTexture!;
+    const imgNW = corner.nw.source.requestTile.imageryTexture!;
+    const imgNE = corner.ne.source.requestTile.imageryTexture!;
+    const imgSW = corner.sw.source.requestTile.imageryTexture!;
+    const imgSE = corner.se.source.requestTile.imageryTexture!;
 
-    const inset2 = float(2.0 * uvInset);
+    const insetF = float(uvInset);
     const oneMinusInset = float(1 - uvInset);
+    const inset2 = float(2.0 * uvInset);
 
     const tx = step(float(0.5), uv().x);
     const ty = step(float(0.5), uv().y);
 
-    // West column X: u [0, 0.5] -> tileUV_x [1-inset, 1.0]
-    const westX = uv().x.mul(inset2).add(oneMinusInset);
-    // East column X: u [0.5, 1.0] -> tileUV_x [0.0, inset]
-    const eastX = uv().x.sub(0.5).mul(inset2);
+    const westXnorm = uv().x.mul(inset2).add(oneMinusInset);
+    const eastXnorm = uv().x.sub(0.5).mul(inset2);
+    const bottomYnorm = uv().y.mul(inset2).add(oneMinusInset);
+    const topYnorm = uv().y.sub(0.5).mul(inset2);
 
-    // Bottom row Y: v [0, 0.5] -> tileUV_y [1-inset, 1.0] (north buffer of south tiles)
-    const bottomY = uv().y.mul(inset2).add(oneMinusInset);
-    // Top row Y: v [0.5, 1.0] -> tileUV_y [0.0, inset] (south buffer of north tiles)
-    const topY = uv().y.sub(0.5).mul(inset2);
+    function remap(uvb: typeof uvbNW, xNorm: ReturnType<typeof float>, yNorm: ReturnType<typeof float>) {
+      const mn = vec2(float(uvb.uMin), float(uvb.vMin));
+      const sz = vec2(float(uvb.uMax - uvb.uMin), float(uvb.vMax - uvb.vMin));
+      return mn.add(vec2(sz.x.mul(xNorm), sz.y.mul(yNorm)));
+    }
 
-    const uvSW = vec2(westX, bottomY);
-    const uvSE = vec2(eastX, bottomY);
-    const uvNW = vec2(westX, topY);
-    const uvNE = vec2(eastX, topY);
+    const uvSW = remap(uvbSW, westXnorm, bottomYnorm);
+    const uvSE = remap(uvbSE, eastXnorm, bottomYnorm);
+    const uvNW = remap(uvbNW, westXnorm, topYnorm);
+    const uvNE = remap(uvbNE, eastXnorm, topYnorm);
 
     const demTexNode = mix(
       mix(texture(demSW, uvSW), texture(demSE, uvSE), tx),
@@ -108,10 +117,14 @@ export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightSca
     return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    corner.nw.demTexture, corner.nw.imageryTexture,
-    corner.ne.demTexture, corner.ne.imageryTexture,
-    corner.sw.demTexture, corner.sw.imageryTexture,
-    corner.se.demTexture, corner.se.imageryTexture,
+    corner.nw.source.requestTile.demTexture, corner.nw.source.requestTile.imageryTexture,
+    corner.ne.source.requestTile.demTexture, corner.ne.source.requestTile.imageryTexture,
+    corner.sw.source.requestTile.demTexture, corner.sw.source.requestTile.imageryTexture,
+    corner.se.source.requestTile.demTexture, corner.se.source.requestTile.imageryTexture,
+    uvbNW.uMin, uvbNW.vMin, uvbNW.uMax, uvbNW.vMax,
+    uvbNE.uMin, uvbNE.vMin, uvbNE.uMax, uvbNE.vMax,
+    uvbSW.uMin, uvbSW.vMin, uvbSW.uMax, uvbSW.vMax,
+    uvbSE.uMin, uvbSE.vMin, uvbSE.uMax, uvbSE.vMax,
     uvInset,
   ]);
 
@@ -134,40 +147,19 @@ export function TileCornerPatchMesh({ corner, viewState, viewportSize, heightSca
     return mat;
   }, [nodes]);
 
-  useEffect(() => {
-    material.wireframe = debug.wireframe;
-  }, [material, debug.wireframe]);
-
-  useEffect(() => {
-    nodes.uWireframeWhite.value = debug.wireframe ? 1.0 : 0.0;
-  }, [nodes, debug.wireframe]);
-
-  useEffect(() => {
-    nodes.uHeightScaleFactor.value = heightScale * debug.displacementScale * worldUnitsPerMeter;
-  }, [nodes, heightScale, debug.displacementScale, worldUnitsPerMeter]);
-
-  useEffect(() => {
-    nodes.uFlattenTerrain.value = debug.flattenTerrain ? 1.0 : 0.0;
-  }, [nodes, debug.flattenTerrain]);
-
-  useEffect(() => {
-    nodes.uBase.value = decodeParams.base;
-    nodes.uInterval.value = decodeParams.interval;
-  }, [nodes, decodeParams]);
-
-  useEffect(() => {
-    return () => { geometry?.dispose(); };
-  }, [geometry]);
-
-  useEffect(() => {
-    return () => { material.dispose(); };
-  }, [material]);
+  useEffect(() => { material.wireframe = debug.wireframe; }, [material, debug.wireframe]);
+  useEffect(() => { nodes.uWireframeWhite.value = debug.wireframe ? 1.0 : 0.0; }, [nodes, debug.wireframe]);
+  useEffect(() => { nodes.uHeightScaleFactor.value = heightScale * debug.displacementScale * worldUnitsPerMeter; }, [nodes, heightScale, debug.displacementScale, worldUnitsPerMeter]);
+  useEffect(() => { nodes.uFlattenTerrain.value = debug.flattenTerrain ? 1.0 : 0.0; }, [nodes, debug.flattenTerrain]);
+  useEffect(() => { nodes.uBase.value = decodeParams.base; nodes.uInterval.value = decodeParams.interval; }, [nodes, decodeParams]);
+  useEffect(() => { return () => { geometry?.dispose(); }; }, [geometry]);
+  useEffect(() => { return () => { material.dispose(); }; }, [material]);
 
   const allReady =
-    corner.nw.demTexture && corner.nw.imageryTexture &&
-    corner.ne.demTexture && corner.ne.imageryTexture &&
-    corner.sw.demTexture && corner.sw.imageryTexture &&
-    corner.se.demTexture && corner.se.imageryTexture;
+    corner.nw.source.requestTile.demTexture && corner.nw.source.requestTile.imageryTexture &&
+    corner.ne.source.requestTile.demTexture && corner.ne.source.requestTile.imageryTexture &&
+    corner.sw.source.requestTile.demTexture && corner.sw.source.requestTile.imageryTexture &&
+    corner.se.source.requestTile.demTexture && corner.se.source.requestTile.imageryTexture;
 
   if (!allReady) return null;
 
