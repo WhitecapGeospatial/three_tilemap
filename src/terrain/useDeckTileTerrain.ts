@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TileLayer } from "@deck.gl/geo-layers";
 import * as THREE from "three";
-import type { DemDecodeParams, TileIndex } from "../types";
+import type { DemDecodeParams, MapViewState, TileIndex, TileSize } from "../types";
 import type { RequestTile } from "./types";
+import {
+  computeVisibleRange,
+  selectVisibleTiles,
+  tileOverlapsRange,
+} from "./tileSelection";
 
 const DEM_ENDPOINT =
   "https://cogserver-staging-myzvqet7ua-uw.a.run.app/get_rgb_tile/{z}/{x}/{y}.png?dataset=GlobalTopoBath.tif";
 const IMAGERY_ENDPOINT =
   "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+const SETTLE_MS = 500;
 
 function tileId(index: TileIndex): string {
   return `${index.z}/${index.x}/${index.y}`;
@@ -86,20 +93,6 @@ function cancelTile(id: string) {
   fetchWorker.postMessage({ type: "cancel", id });
 }
 
-function cancelTilesForStaleZooms(keepZoom: number, maxRenderZoom: number) {
-  const toCancel: string[] = [];
-  for (const id of pendingFetches.keys()) {
-    const z = zoomFromTileId(id);
-    if (z !== keepZoom && z !== maxRenderZoom) {
-      toCancel.push(id);
-    }
-  }
-  for (const id of toCancel) {
-    cancelTile(id);
-  }
-  return toCancel;
-}
-
 function loadTileTextures(index: TileIndex): Promise<TileTextures> {
   const id = tileId(index);
   cancelTile(id);
@@ -117,22 +110,18 @@ function loadTileTextures(index: TileIndex): Promise<TileTextures> {
 export function useDeckTileTerrain(
   decodeParams: DemDecodeParams,
   minRequestZoom: number,
-  maxRenderZoom: number,
-  requestGeneration: number,
-  currentZoom: number,
+  maxRequestZoom: number,
+  viewState: MapViewState,
+  viewportSize: TileSize,
 ): {
   layer: TileLayer;
-  requestTileCache: Map<string, RequestTile>;
+  readyTiles: RequestTile[];
   decodeParams: DemDecodeParams;
-  pruneUnusedTiles: (referencedIds: Set<string>) => void;
-  fetchTiles: (indices: TileIndex[]) => void;
 } {
   const [tileMap, setTileMap] = useState<Record<string, RequestTile>>({});
   const aliveIds = useRef(new Set<string>());
   const disposalQueue = useRef<THREE.Texture[]>([]);
-  const setTileMapRef = useRef(setTileMap);
-  setTileMapRef.current = setTileMap;
-  const prevIntZoomRef = useRef(Math.floor(currentZoom));
+  const prevTargetZoomRef = useRef<number | null>(null);
 
   const onTileUnload = useCallback((tile: { index: TileIndex }) => {
     const id = tileId(tile.index);
@@ -163,18 +152,17 @@ export function useDeckTileTerrain(
         return;
       }
 
-      setTileMap((prev) => {
-        const next = { ...prev };
-        next[id] = {
+      setTileMap((prev) => ({
+        ...prev,
+        [id]: {
           id,
           index: tile.index,
           status: "ready",
           imageryTexture,
           demTexture,
           lastUsed: performance.now(),
-        };
-        return next;
-      });
+        },
+      }));
     },
     [],
   );
@@ -182,17 +170,16 @@ export function useDeckTileTerrain(
   const onTileError = useCallback(
     (_error: unknown, tile: { index: TileIndex }) => {
       const id = tileId(tile.index);
-      setTileMap((prev) => {
-        const next = { ...prev };
-        next[id] = {
+      setTileMap((prev) => ({
+        ...prev,
+        [id]: {
           id,
           index: tile.index,
           status: "error",
           errorMessage: _error instanceof Error ? _error.message : String(_error),
           lastUsed: performance.now(),
-        };
-        return next;
-      });
+        },
+      }));
     },
     [],
   );
@@ -205,55 +192,53 @@ export function useDeckTileTerrain(
     return () => cancelAnimationFrame(handle);
   });
 
-  const intZoom = Math.floor(currentZoom);
+  const viewZoom = viewState.zoom;
+  const targetZoom = Math.min(maxRequestZoom, Math.max(minRequestZoom, Math.round(viewZoom)));
+
+  // Cancel in-flight fetches for zoom levels far from the new target
   useEffect(() => {
-    if (intZoom === prevIntZoomRef.current) return;
-    prevIntZoomRef.current = intZoom;
+    if (prevTargetZoomRef.current === targetZoom) return;
+    prevTargetZoomRef.current = targetZoom;
 
-    const cancelled = cancelTilesForStaleZooms(intZoom, maxRenderZoom);
-    if (cancelled.length === 0) return;
-
-    setTileMap((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const id of cancelled) {
-        if (next[id]?.status === "loading") {
-          delete next[id];
-          changed = true;
-        }
+    const toCancel: string[] = [];
+    for (const id of pendingFetches.keys()) {
+      const z = zoomFromTileId(id);
+      if (Math.abs(z - targetZoom) > 1) {
+        toCancel.push(id);
       }
-      return changed ? next : prev;
-    });
-  }, [intZoom, maxRenderZoom]);
+    }
+    for (const id of toCancel) {
+      cancelTile(id);
+    }
+
+    if (toCancel.length > 0) {
+      setTileMap((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of toCancel) {
+          if (next[id]?.status === "loading") {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+  }, [targetZoom]);
 
   const getTileData = useCallback(
-    ({ index }: { index: TileIndex }) => {
-      const id = tileId(index);
-      setTileMapRef.current((prev) => {
-        if (prev[id]?.status === "ready") return prev;
-        return {
-          ...prev,
-          [id]: {
-            id,
-            index,
-            status: "loading" as const,
-            lastUsed: performance.now(),
-          },
-        };
-      });
-      return loadTileTextures(index);
-    },
+    ({ index }: { index: TileIndex }) => loadTileTextures(index),
     [],
   );
 
   const layer = useMemo(
     () =>
       new TileLayer({
-        id: `dem-imagery-loader-${requestGeneration}`,
+        id: "dem-imagery-tile-layer",
         data: IMAGERY_ENDPOINT,
         tileSize: 256,
         minZoom: minRequestZoom,
-        maxZoom: maxRenderZoom,
+        maxZoom: maxRequestZoom,
         maxRequests: 16,
         debounceTime: 50,
         refinementStrategy: "best-available",
@@ -263,67 +248,52 @@ export function useDeckTileTerrain(
         onTileUnload,
         onTileError,
       }),
-    [minRequestZoom, maxRenderZoom, requestGeneration, getTileData, onTileLoad, onTileUnload, onTileError],
+    [minRequestZoom, maxRequestZoom, getTileData, onTileLoad, onTileUnload, onTileError],
   );
 
-  const requestTileCache = useMemo(() => {
-    const cache = new Map<string, RequestTile>();
-    for (const rec of Object.values(tileMap)) {
-      cache.set(rec.id, rec);
-    }
-    return cache;
-  }, [tileMap]);
+  const visibleRange = useMemo(
+    () => computeVisibleRange(viewState, viewportSize, targetZoom),
+    [
+      viewState.longitude, viewState.latitude, viewState.zoom,
+      viewState.pitch, viewState.bearing,
+      viewportSize.width, viewportSize.height,
+      targetZoom,
+    ],
+  );
 
-  const pruneUnusedTiles = useCallback((referencedIds: Set<string>) => {
-    setTileMap((prev) => {
-      let changed = false;
-      const next: Record<string, RequestTile> = {};
-      for (const [id, rec] of Object.entries(prev)) {
-        if (referencedIds.has(id)) {
-          next[id] = rec;
-        } else {
-          changed = true;
-          if (rec.demTexture) disposalQueue.current.push(rec.demTexture);
-          if (rec.imageryTexture) disposalQueue.current.push(rec.imageryTexture);
+  // Prune stale tiles after the viewport settles:
+  // - tiles that don't overlap the viewport at all
+  // - tiles more than 1 zoom level from targetZoom (no longer useful as fallback)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setTileMap((prev) => {
+        let changed = false;
+        const next: Record<string, RequestTile> = {};
+        for (const [id, rec] of Object.entries(prev)) {
+          const overlaps = tileOverlapsRange(rec.index, visibleRange);
+          const nearTarget = Math.abs(rec.index.z - targetZoom) <= 1;
+          if (rec.status === "loading" || (overlaps && nearTarget)) {
+            next[id] = rec;
+          } else {
+            changed = true;
+            if (rec.demTexture) disposalQueue.current.push(rec.demTexture);
+            if (rec.imageryTexture) disposalQueue.current.push(rec.imageryTexture);
+          }
         }
-      }
-      return changed ? next : prev;
-    });
-  }, []);
-
-  const fetchTiles = useCallback((indices: TileIndex[]) => {
-    for (const index of indices) {
-      const id = tileId(index);
-      const existing = requestTileCache.get(id);
-      if (existing?.status === "ready" || existing?.status === "loading") continue;
-
-      setTileMapRef.current((prev) => {
-        if (prev[id]?.status === "ready" || prev[id]?.status === "loading") return prev;
-        return {
-          ...prev,
-          [id]: { id, index, status: "loading" as const, lastUsed: performance.now() },
-        };
+        return changed ? next : prev;
       });
+    }, SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [visibleRange, targetZoom]);
 
-      loadTileTextures(index).then(({ demTexture, imageryTexture }) => {
-        setTileMapRef.current((prev) => ({
-          ...prev,
-          [id]: { id, index, status: "ready" as const, demTexture, imageryTexture, lastUsed: performance.now() },
-        }));
-      }).catch((err) => {
-        setTileMapRef.current((prev) => ({
-          ...prev,
-          [id]: { id, index, status: "error" as const, errorMessage: String(err), lastUsed: performance.now() },
-        }));
-      });
-    }
-  }, [requestTileCache]);
+  const readyTiles = useMemo(
+    () => selectVisibleTiles(tileMap, targetZoom, visibleRange),
+    [tileMap, targetZoom, visibleRange],
+  );
 
   return {
     layer,
-    requestTileCache,
+    readyTiles,
     decodeParams,
-    pruneUnusedTiles,
-    fetchTiles,
   };
 }

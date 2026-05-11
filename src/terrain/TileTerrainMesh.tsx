@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import * as ThreeWebGPU from "three/webgpu";
-import { texture, uniform, vec3, float, positionLocal, uv, vec2 } from "three/tsl";
-import type { DemDecodeParams, MapViewState, TileIndex, TileSize } from "../types";
-import type { RenderedTile } from "./types";
-import { metersToWorldScale, tileToLngLatBounds, tileToWorldBounds } from "../utils/tileMath";
+import { texture, uniform, vec3, float, positionLocal, uv } from "three/tsl";
+import type { DemDecodeParams, MapViewState, TileSize } from "../types";
+import type { RequestTile } from "./types";
+import { metersToWorldScale, tileToWorldBounds } from "../utils/tileMath";
 import type { DebugVisState } from "../debugVis";
 
+const SEGMENTS = 16;
+
 type TileTerrainMeshProps = {
-  tile: RenderedTile;
-  maxRenderZoom: number;
+  tile: RequestTile;
   viewState: MapViewState | { longitude: number; latitude: number };
   viewportSize: TileSize;
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
   meterZoom?: number;
-  uvInset: number;
   isSelected?: boolean;
   onSelect?: (tileId: string) => void;
 };
@@ -29,42 +29,27 @@ const HIGHLIGHT_MATERIAL = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 
-export function TileTerrainMesh({ tile, maxRenderZoom, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, uvInset, isSelected, onSelect }: TileTerrainMeshProps) {
+export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, debug, decodeParams, meterZoom, isSelected, onSelect }: TileTerrainMeshProps) {
   const hasLoggedRef = useRef(false);
-  const renderIndex: TileIndex = { x: tile.renderIndex.x, y: tile.renderIndex.y, z: maxRenderZoom };
 
   const worldBounds = useMemo(
-    () => tileToWorldBounds(viewState, viewportSize, renderIndex, meterZoom),
-    [renderIndex.x, renderIndex.y, renderIndex.z, viewState, viewportSize, meterZoom],
+    () => tileToWorldBounds(viewState, viewportSize, tile.index, meterZoom),
+    [tile.index.x, tile.index.y, tile.index.z, viewState, viewportSize, meterZoom],
   );
   const worldUnitsPerMeter = useMemo(
     () => metersToWorldScale(viewState, viewportSize, meterZoom),
     [viewState, viewportSize, meterZoom],
   );
-  const lngLatBounds = useMemo(() => tileToLngLatBounds(renderIndex), [renderIndex.x, renderIndex.y, renderIndex.z]);
 
   const geometry = useMemo(() => {
-    const coreSpan = 1 - 2 * uvInset;
-    const width = (worldBounds.worldMaxX - worldBounds.worldMinX) * coreSpan;
-    const height = (worldBounds.worldMaxY - worldBounds.worldMinY) * coreSpan;
-    return new THREE.PlaneGeometry(width, height, tile.segments, tile.segments);
-  }, [
-    uvInset, tile.segments,
-    worldBounds.worldMaxX, worldBounds.worldMaxY,
-    worldBounds.worldMinX, worldBounds.worldMinY,
-  ]);
+    const width = worldBounds.worldMaxX - worldBounds.worldMinX;
+    const height = worldBounds.worldMaxY - worldBounds.worldMinY;
+    return new THREE.PlaneGeometry(width, height, SEGMENTS, SEGMENTS);
+  }, [worldBounds.worldMaxX, worldBounds.worldMaxY, worldBounds.worldMinX, worldBounds.worldMinY]);
 
-  const { uvBounds } = tile.source;
   const nodes = useMemo(() => {
-    const uUVMin = vec2(float(uvBounds.uMin), float(uvBounds.vMin));
-    const uUVMax = vec2(float(uvBounds.uMax), float(uvBounds.vMax));
-    const uvSize = uUVMax.sub(uUVMin);
-    const localInset = uvSize.mul(float(uvInset));
-    const localCoreSpan = uvSize.mul(float(1 - 2 * uvInset));
-    const remappedUV = uUVMin.add(localInset).add(vec2(uv().x, uv().y).mul(localCoreSpan));
-
-    const demTexNode = texture(tile.source.requestTile.demTexture!, remappedUV);
-    const imgTexNode = texture(tile.source.requestTile.imageryTexture!, remappedUV);
+    const demTexNode = texture(tile.demTexture!, uv());
+    const imgTexNode = texture(tile.imageryTexture!, uv());
     const uBase = uniform(decodeParams.base);
     const uInterval = uniform(decodeParams.interval);
     const uHeightScaleFactor = uniform(heightScale * debug.displacementScale * worldUnitsPerMeter);
@@ -72,7 +57,7 @@ export function TileTerrainMesh({ tile, maxRenderZoom, viewState, viewportSize, 
     const uWireframeWhite = uniform(debug.wireframe ? 1.0 : 0.0);
     return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tile.source.requestTile.demTexture, tile.source.requestTile.imageryTexture, uvBounds.uMin, uvBounds.vMin, uvBounds.uMax, uvBounds.vMax, uvInset]);
+  }, [tile.demTexture, tile.imageryTexture]);
 
   const material = useMemo(() => {
     const { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite } = nodes;
@@ -130,17 +115,14 @@ export function TileTerrainMesh({ tile, maxRenderZoom, viewState, viewportSize, 
     hasLoggedRef.current = true;
     console.info("[tile-bounds]", {
       id: tile.id,
-      renderIndex: tile.renderIndex,
-      sourceZoom: tile.source.sourceZoom,
-      uvBounds: tile.source.uvBounds,
-      lngLatBounds,
+      index: tile.index,
       worldBounds,
       worldUnitsPerMeter,
       meshZRange: bounds ? { min: bounds.min.z, max: bounds.max.z } : null,
     });
-  }, [geometry, lngLatBounds, tile.id, tile.renderIndex, tile.source, worldBounds, worldUnitsPerMeter, debug.logTileBounds]);
+  }, [geometry, tile.id, tile.index, worldBounds, worldUnitsPerMeter, debug.logTileBounds]);
 
-  if (!tile.source.requestTile.demTexture || !tile.source.requestTile.imageryTexture) {
+  if (!tile.demTexture || !tile.imageryTexture) {
     return null;
   }
 

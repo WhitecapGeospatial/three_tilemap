@@ -4,25 +4,19 @@ import { getMeterZoom } from "@math.gl/web-mercator";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MapViewState, FirstPersonViewState, ViewMode, TileSize, DemDecodeParams } from "../types";
-import type { RenderedTile, RenderedEdgeRecord, RenderedCornerRecord } from "./types";
+import type { RequestTile } from "./types";
 import { TileTerrainMesh } from "./TileTerrainMesh";
-import { TileEdgeStripMesh } from "./TileEdgeStripMesh";
-import { TileCornerPatchMesh } from "./TileCornerPatchMesh";
 import type { DebugVisState } from "../debugVis";
 
 const FP_NEAR = 0.1;
 const FP_FAR = 5_000_000;
-const UV_INSET = 0.25;
 
 type TerrainSceneProps = {
   mapViewState: MapViewState;
   fpViewState: FirstPersonViewState;
   mode: ViewMode;
   viewportSize: TileSize;
-  renderedTiles: RenderedTile[];
-  edgeRecords: RenderedEdgeRecord[];
-  cornerRecords: RenderedCornerRecord[];
-  maxRenderZoom: number;
+  tiles: RequestTile[];
   heightScale: number;
   debug: DebugVisState;
   decodeParams: DemDecodeParams;
@@ -169,10 +163,7 @@ export function TerrainScene({
   fpViewState,
   mode,
   viewportSize,
-  renderedTiles,
-  edgeRecords,
-  cornerRecords,
-  maxRenderZoom,
+  tiles,
   heightScale,
   debug,
   decodeParams,
@@ -180,9 +171,9 @@ export function TerrainScene({
   onSelectTile,
 }: TerrainSceneProps) {
   const filteredTiles = useMemo(() => {
-    if (!debug.singleTileOnly) return renderedTiles;
-    return renderedTiles.filter((tile) => tile.id === debug.singleTileId);
-  }, [renderedTiles, debug.singleTileId, debug.singleTileOnly]);
+    if (!debug.singleTileOnly) return tiles;
+    return tiles.filter((tile) => tile.id === debug.singleTileId);
+  }, [tiles, debug.singleTileId, debug.singleTileOnly]);
 
   const meterZoom = useMemo(
     () =>
@@ -217,44 +208,14 @@ export function TerrainScene({
         <TileTerrainMesh
           key={tile.id}
           tile={tile}
-          maxRenderZoom={maxRenderZoom}
           viewState={tileViewState}
           viewportSize={viewportSize}
           heightScale={heightScale}
           debug={debug}
           decodeParams={decodeParams}
           meterZoom={meterZoom}
-          uvInset={UV_INSET}
           isSelected={tile.id === selectedTileId}
           onSelect={onSelectTile}
-        />
-      ))}
-      {edgeRecords.map((edge) => (
-        <TileEdgeStripMesh
-          key={edge.id}
-          edge={edge}
-          maxRenderZoom={maxRenderZoom}
-          viewState={tileViewState}
-          viewportSize={viewportSize}
-          heightScale={heightScale}
-          debug={debug}
-          decodeParams={decodeParams}
-          meterZoom={meterZoom}
-          uvInset={UV_INSET}
-        />
-      ))}
-      {cornerRecords.map((corner) => (
-        <TileCornerPatchMesh
-          key={corner.id}
-          corner={corner}
-          maxRenderZoom={maxRenderZoom}
-          viewState={tileViewState}
-          viewportSize={viewportSize}
-          heightScale={heightScale}
-          debug={debug}
-          decodeParams={decodeParams}
-          meterZoom={meterZoom}
-          uvInset={UV_INSET}
         />
       ))}
     </>

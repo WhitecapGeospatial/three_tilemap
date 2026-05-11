@@ -6,7 +6,6 @@ import * as THREE from "three";
 import type { MapViewState, FirstPersonViewState, TileSize } from "./types";
 import { useViewStateStore } from "./store/viewStateStore";
 import { useDeckTileTerrain } from "./terrain/useDeckTileTerrain";
-import { useRenderedTileGrid, computeVisibleRange } from "./terrain/useRenderedTileGrid";
 import { TerrainScene } from "./terrain/TerrainScene";
 import { TileInfoPanel } from "./ui/TileInfoPanel";
 import { DEBUG_VIS, DEFAULT_DEBUG_VIS_STATE } from "./debugVis";
@@ -21,10 +20,8 @@ function RendererInfo({ onInfo }: { onInfo: (info: string) => void }) {
 }
 
 const HEIGHT_SCALE = 1;
-const MAX_RENDER_ZOOM = 9;
+const MAX_REQUEST_ZOOM = 11;
 const MIN_REQUEST_ZOOM = 3;
-const SETTLE_DEBOUNCE_MS = 500;
-const GAP_FILL_DELAY_MS = 500;
 
 function useElementSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -118,34 +115,6 @@ function isTextInputTarget(target: EventTarget | null) {
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
-function useSettleDetector(
-  mapViewState: MapViewState,
-  fpViewState: FirstPersonViewState,
-  mode: string,
-): number {
-  const [generation, setGeneration] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      setGeneration((g) => g + 1);
-    }, SETTLE_DEBOUNCE_MS);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [
-    mapViewState.longitude, mapViewState.latitude, mapViewState.zoom,
-    mapViewState.pitch, mapViewState.bearing,
-    fpViewState.longitude, fpViewState.latitude,
-    fpViewState.position[0], fpViewState.position[1], fpViewState.position[2],
-    fpViewState.pitch, fpViewState.bearing,
-    mode,
-  ]);
-
-  return generation;
-}
-
 export function App() {
   const { mode, mapViewState, fpViewState, setMode, setMapViewState, setFpViewState } = useViewStateStore();
   const { ref, size } = useElementSize<HTMLDivElement>();
@@ -158,54 +127,27 @@ export function App() {
     setSelectedTileId((prev) => (prev === id ? null : id));
   }, []);
 
-  const requestGeneration = useSettleDetector(mapViewState, fpViewState, mode);
+  const terrainViewState = useMemo<MapViewState>(
+    () =>
+      mode === "firstPerson"
+        ? {
+            longitude: fpViewState.longitude,
+            latitude: fpViewState.latitude,
+            zoom: mapViewState.zoom,
+            pitch: 0,
+            bearing: fpViewState.bearing,
+          }
+        : mapViewState,
+    [mode, mapViewState, fpViewState],
+  );
 
-  const { layer, requestTileCache, decodeParams, pruneUnusedTiles, fetchTiles } = useDeckTileTerrain(
+  const { layer, readyTiles, decodeParams } = useDeckTileTerrain(
     { base: -10000, interval: 0.1 },
     MIN_REQUEST_ZOOM,
-    MAX_RENDER_ZOOM,
-    requestGeneration,
-    mapViewState.zoom,
-  );
-
-  const { renderedTiles, edgeRecords, cornerRecords } = useRenderedTileGrid(
-    requestTileCache,
-    mapViewState,
+    MAX_REQUEST_ZOOM,
+    terrainViewState,
     size,
-    MIN_REQUEST_ZOOM,
-    MAX_RENDER_ZOOM,
-    mapViewState.zoom,
   );
-
-  const referencedRequestIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const tile of renderedTiles) {
-      ids.add(tile.source.requestTile.id);
-    }
-    return ids;
-  }, [renderedTiles]);
-
-  useEffect(() => {
-    pruneUnusedTiles(referencedRequestIds);
-  }, [requestGeneration, pruneUnusedTiles, referencedRequestIds]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const range = computeVisibleRange(mapViewState, size, MAX_RENDER_ZOOM);
-      const missing: { x: number; y: number; z: number }[] = [];
-      for (let x = range.xMin; x <= range.xMax; x++) {
-        for (let y = range.yMin; y <= range.yMax; y++) {
-          const id = `${MAX_RENDER_ZOOM}/${x}/${y}`;
-          const cached = requestTileCache.get(id);
-          if (!cached || cached.status === "error") {
-            missing.push({ x, y, z: MAX_RENDER_ZOOM });
-          }
-        }
-      }
-      if (missing.length > 0) fetchTiles(missing);
-    }, GAP_FILL_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [requestGeneration, mapViewState, size, requestTileCache, fetchTiles]);
 
   const layers = useMemo(() => [layer], [layer]);
 
@@ -391,10 +333,7 @@ export function App() {
           fpViewState={fpViewState}
           mode={mode}
           viewportSize={size}
-          renderedTiles={renderedTiles}
-          edgeRecords={edgeRecords}
-          cornerRecords={cornerRecords}
-          maxRenderZoom={MAX_RENDER_ZOOM}
+          tiles={readyTiles}
           heightScale={HEIGHT_SCALE}
           debug={debug}
           decodeParams={decodeParams}
@@ -432,10 +371,7 @@ export function App() {
       </div>
 
       <TileInfoPanel
-        renderedTiles={renderedTiles}
-        requestTileCache={requestTileCache}
-        maxRenderZoom={MAX_RENDER_ZOOM}
-        minRequestZoom={MIN_REQUEST_ZOOM}
+        tiles={readyTiles}
         selectedTileId={selectedTileId}
         onSelectTile={handleSelectTile}
       />
