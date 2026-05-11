@@ -27,27 +27,58 @@ function buildImageryUrl(index: TileIndex): string {
 
 type TileTextures = { demTexture: THREE.Texture; imageryTexture: THREE.Texture };
 
+const fetchWorker = new Worker(
+  new URL("./tileFetchWorker.ts", import.meta.url),
+  { type: "module" },
+);
+
+const pendingFetches = new Map<
+  string,
+  { resolve: (v: TileTextures) => void; reject: (e: Error) => void }
+>();
+
+fetchWorker.onmessage = (e: MessageEvent) => {
+  const { id } = e.data;
+  const entry = pendingFetches.get(id);
+  if (!entry) return;
+  pendingFetches.delete(id);
+
+  if (e.data.type === "error") {
+    entry.reject(new Error(e.data.message));
+    return;
+  }
+
+  const demTexture = new THREE.Texture(e.data.demBitmap);
+  demTexture.flipY = true;
+  demTexture.colorSpace = THREE.NoColorSpace;
+  demTexture.minFilter = THREE.LinearFilter;
+  demTexture.magFilter = THREE.LinearFilter;
+  demTexture.wrapS = THREE.ClampToEdgeWrapping;
+  demTexture.wrapT = THREE.ClampToEdgeWrapping;
+  demTexture.needsUpdate = true;
+
+  const imageryTexture = new THREE.Texture(e.data.imageryBitmap);
+  imageryTexture.flipY = true;
+  imageryTexture.colorSpace = THREE.SRGBColorSpace;
+  imageryTexture.minFilter = THREE.LinearFilter;
+  imageryTexture.magFilter = THREE.LinearFilter;
+  imageryTexture.wrapS = THREE.ClampToEdgeWrapping;
+  imageryTexture.wrapT = THREE.ClampToEdgeWrapping;
+  imageryTexture.needsUpdate = true;
+
+  entry.resolve({ demTexture, imageryTexture });
+};
+
 function loadTileTextures(index: TileIndex): Promise<TileTextures> {
-  const loader = new THREE.TextureLoader();
-  return Promise.all([
-    loader.loadAsync(buildDemUrl(index)),
-    loader.loadAsync(buildImageryUrl(index)),
-  ]).then(([demTexture, imageryTexture]) => {
-    demTexture.flipY = true;
-    demTexture.colorSpace = THREE.NoColorSpace;
-    demTexture.minFilter = THREE.LinearFilter;
-    demTexture.magFilter = THREE.LinearFilter;
-    demTexture.wrapS = THREE.ClampToEdgeWrapping;
-    demTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    imageryTexture.flipY = true;
-    imageryTexture.colorSpace = THREE.SRGBColorSpace;
-    imageryTexture.minFilter = THREE.LinearFilter;
-    imageryTexture.magFilter = THREE.LinearFilter;
-    imageryTexture.wrapS = THREE.ClampToEdgeWrapping;
-    imageryTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    return { demTexture, imageryTexture };
+  const id = tileId(index);
+  return new Promise((resolve, reject) => {
+    pendingFetches.set(id, { resolve, reject });
+    fetchWorker.postMessage({
+      type: "fetch",
+      id,
+      demUrl: buildDemUrl(index),
+      imageryUrl: buildImageryUrl(index),
+    });
   });
 }
 

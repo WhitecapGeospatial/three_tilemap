@@ -173,6 +173,7 @@ export function App() {
     size,
     MIN_REQUEST_ZOOM,
     MAX_RENDER_ZOOM,
+    mapViewState.zoom,
   );
 
   const referencedRequestIds = useMemo(() => {

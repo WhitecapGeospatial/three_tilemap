@@ -9,6 +9,7 @@ import type {
   RenderedCornerRecord,
 } from "./types";
 import { tileToLngLatBounds } from "../utils/tileMath";
+import { resolveUVBounds } from "./resolveUVBounds";
 
 const BASE_SEGMENTS = 16;
 const MIN_SEGMENTS = 4;
@@ -30,12 +31,7 @@ function resolveSource(
       const localY = ry - ty * scale;
       return {
         requestTile: tile,
-        uvBounds: {
-          uMin: localX / scale,
-          uMax: (localX + 1) / scale,
-          vMin: localY / scale,
-          vMax: (localY + 1) / scale,
-        },
+        uvBounds: resolveUVBounds(localX, localY, scale),
         sourceZoom: z,
       };
     }
@@ -106,9 +102,13 @@ export function computeVisibleRange(
 function effectiveSegments(
   maxRenderZoom: number,
   lowestSourceZoom: number,
+  viewZoom: number,
 ): number {
-  const delta = maxRenderZoom - lowestSourceZoom;
-  return Math.max(MIN_SEGMENTS, BASE_SEGMENTS >> delta);
+  const sourceDelta = maxRenderZoom - lowestSourceZoom;
+  const viewDelta = Math.max(0, maxRenderZoom - Math.floor(viewZoom));
+  const totalDelta = Math.max(sourceDelta, viewDelta);
+  const minSegs = viewDelta >= 3 ? 1 : viewDelta >= 1 ? 2 : MIN_SEGMENTS;
+  return Math.max(minSegs, BASE_SEGMENTS >> totalDelta);
 }
 
 function neighborMinZoom(
@@ -138,6 +138,7 @@ export function useRenderedTileGrid(
   viewportSize: TileSize,
   minRequestZoom: number,
   maxRenderZoom: number,
+  viewZoom: number,
 ): RenderedTileGridResult {
   const committedRef = useRef<Map<string, RenderedTile>>(new Map());
 
@@ -194,12 +195,12 @@ export function useRenderedTileGrid(
 
     for (const tile of next.values()) {
       const localMin = neighborMinZoom(tile.renderIndex.x, tile.renderIndex.y, next);
-      tile.segments = effectiveSegments(maxRenderZoom, localMin);
+      tile.segments = effectiveSegments(maxRenderZoom, localMin, viewZoom);
     }
 
     committedRef.current = next;
     return { renderedTiles: Array.from(next.values()), renderedGrid: next };
-  }, [requestTileCache, viewState, viewportSize, minRequestZoom, maxRenderZoom]);
+  }, [requestTileCache, viewState, viewportSize, minRequestZoom, maxRenderZoom, viewZoom]);
 
   const { edgeRecords, cornerRecords } = useMemo(() => {
     const edges: RenderedEdgeRecord[] = [];
