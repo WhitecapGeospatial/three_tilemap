@@ -13,6 +13,10 @@ function tileId(index: TileIndex): string {
   return `${index.z}/${index.x}/${index.y}`;
 }
 
+function zoomFromTileId(id: string): number {
+  return Number.parseInt(id.split("/")[0], 10);
+}
+
 function buildDemUrl(index: TileIndex): string {
   return DEM_ENDPOINT.replace("{z}", `${index.z}`)
     .replace("{x}", `${index.x}`)
@@ -39,6 +43,12 @@ const pendingFetches = new Map<
 
 fetchWorker.onmessage = (e: MessageEvent) => {
   const { id } = e.data;
+
+  if (e.data.type === "cancelled") {
+    pendingFetches.delete(id);
+    return;
+  }
+
   const entry = pendingFetches.get(id);
   if (!entry) return;
   pendingFetches.delete(id);
@@ -69,8 +79,30 @@ fetchWorker.onmessage = (e: MessageEvent) => {
   entry.resolve({ demTexture, imageryTexture });
 };
 
+function cancelTile(id: string) {
+  const entry = pendingFetches.get(id);
+  if (!entry) return;
+  pendingFetches.delete(id);
+  fetchWorker.postMessage({ type: "cancel", id });
+}
+
+function cancelTilesForStaleZooms(keepZoom: number, maxRenderZoom: number) {
+  const toCancel: string[] = [];
+  for (const id of pendingFetches.keys()) {
+    const z = zoomFromTileId(id);
+    if (z !== keepZoom && z !== maxRenderZoom) {
+      toCancel.push(id);
+    }
+  }
+  for (const id of toCancel) {
+    cancelTile(id);
+  }
+  return toCancel;
+}
+
 function loadTileTextures(index: TileIndex): Promise<TileTextures> {
   const id = tileId(index);
+  cancelTile(id);
   return new Promise((resolve, reject) => {
     pendingFetches.set(id, { resolve, reject });
     fetchWorker.postMessage({
@@ -87,6 +119,7 @@ export function useDeckTileTerrain(
   minRequestZoom: number,
   maxRenderZoom: number,
   requestGeneration: number,
+  currentZoom: number,
 ): {
   layer: TileLayer;
   requestTileCache: Map<string, RequestTile>;
@@ -99,6 +132,7 @@ export function useDeckTileTerrain(
   const disposalQueue = useRef<THREE.Texture[]>([]);
   const setTileMapRef = useRef(setTileMap);
   setTileMapRef.current = setTileMap;
+  const prevIntZoomRef = useRef(Math.floor(currentZoom));
 
   const onTileUnload = useCallback((tile: { index: TileIndex }) => {
     const id = tileId(tile.index);
@@ -170,6 +204,27 @@ export function useDeckTileTerrain(
     });
     return () => cancelAnimationFrame(handle);
   });
+
+  const intZoom = Math.floor(currentZoom);
+  useEffect(() => {
+    if (intZoom === prevIntZoomRef.current) return;
+    prevIntZoomRef.current = intZoom;
+
+    const cancelled = cancelTilesForStaleZooms(intZoom, maxRenderZoom);
+    if (cancelled.length === 0) return;
+
+    setTileMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of cancelled) {
+        if (next[id]?.status === "loading") {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [intZoom, maxRenderZoom]);
 
   const getTileData = useCallback(
     ({ index }: { index: TileIndex }) => {

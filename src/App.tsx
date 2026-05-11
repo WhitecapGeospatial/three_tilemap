@@ -165,6 +165,7 @@ export function App() {
     MIN_REQUEST_ZOOM,
     MAX_RENDER_ZOOM,
     requestGeneration,
+    mapViewState.zoom,
   );
 
   const { renderedTiles, edgeRecords, cornerRecords } = useRenderedTileGrid(
