@@ -2,6 +2,93 @@
 
 A 3D terrain viewer that composites a ThreeJS scene on top of a DeckGL map, using DeckGL's WebMercator math to keep both renderers pixel-perfectly aligned. Supports both a standard map view and a free-flying first-person camera.
 
+Available as an NPM package via [GitHub Packages](#installation).
+
+## Installation
+
+```bash
+# Add the GitHub Packages registry for the @anthropic scope (one-time, project or user level)
+echo "@anthropic:registry=https://npm.pkg.github.com" >> .npmrc
+
+# Install (no token needed -- the package is public)
+pnpm add @anthropic/deckgl-three-terrain
+```
+
+### Peer dependencies
+
+This package expects the following to be installed in your project:
+
+- `react` (^18 or ^19) and `react-dom`
+- `three` (>=0.170.0)
+- `@react-three/fiber` (^9) and `@react-three/drei` (^10)
+- `@deck.gl/core`, `@deck.gl/react`, `@deck.gl/geo-layers` (^9.2)
+- `@math.gl/web-mercator` (^4.1)
+- `zustand` (^5)
+
+## Usage
+
+```tsx
+import {
+  useDeckTileTerrain,
+  TerrainScene,
+  useViewStateStore,
+} from "@anthropic/deckgl-three-terrain";
+import type { TileEndpoints } from "@anthropic/deckgl-three-terrain";
+
+const endpoints: TileEndpoints = {
+  demEndpoint: "https://your-dem-server.com/tiles/{z}/{x}/{y}.png",
+  imageryEndpoint: "https://your-imagery-server.com/tiles/{z}/{y}/{x}",
+};
+
+function MyTerrain() {
+  const { mapViewState } = useViewStateStore();
+  const { layer, readyTiles, decodeParams } = useDeckTileTerrain(
+    endpoints,
+    { base: -10000, interval: 0.1 },
+    3,  // minRequestZoom
+    11, // maxRequestZoom
+    mapViewState,
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+
+  // Use `layer` with DeckGL and `readyTiles` + `decodeParams` with TerrainScene
+}
+```
+
+## Development
+
+```bash
+pnpm install
+pnpm dev        # Run the demo app
+pnpm test       # Run tests
+pnpm build:lib  # Build the library to dist/
+```
+
+## Publishing
+
+### Automated (CI)
+
+Push a version tag and the GitHub Actions workflow handles the rest:
+
+```bash
+pnpm version patch   # or minor / major
+git push --follow-tags
+```
+
+### Manual
+
+```bash
+# 1. Authenticate (one-time) -- create a PAT at https://github.com/settings/tokens
+#    with write:packages scope
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+
+# 2. Build + publish
+pnpm build:lib
+pnpm version patch
+pnpm publish
+git push --follow-tags
+```
+
 ## Terminology
 
 This project uses three distinct zoom concepts. Each has a single canonical name used consistently across code and documentation.

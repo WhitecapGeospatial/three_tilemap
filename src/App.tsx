@@ -23,6 +23,13 @@ const HEIGHT_SCALE = 1;
 const MAX_REQUEST_ZOOM = 11;
 const MIN_REQUEST_ZOOM = 3;
 
+const TILE_ENDPOINTS = {
+  demEndpoint:
+    "https://cogserver-staging-myzvqet7ua-uw.a.run.app/get_rgb_tile/{z}/{x}/{y}.png?dataset=GlobalTopoBath.tif",
+  imageryEndpoint:
+    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+};
+
 function useElementSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState<TileSize>({ width: 1, height: 1 });
@@ -142,6 +149,7 @@ export function App() {
   );
 
   const { layer, readyTiles, decodeParams } = useDeckTileTerrain(
+    TILE_ENDPOINTS,
     { base: -10000, interval: 0.1 },
     MIN_REQUEST_ZOOM,
     MAX_REQUEST_ZOOM,

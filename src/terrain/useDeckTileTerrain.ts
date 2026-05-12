@@ -8,11 +8,12 @@ import {
   selectVisibleTiles,
   tileOverlapsRange,
 } from "./tileSelection";
+import TileFetchWorker from "./tileFetchWorker?worker&inline";
 
-const DEM_ENDPOINT =
-  "https://cogserver-staging-myzvqet7ua-uw.a.run.app/get_rgb_tile/{z}/{x}/{y}.png?dataset=GlobalTopoBath.tif";
-const IMAGERY_ENDPOINT =
-  "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+export type TileEndpoints = {
+  demEndpoint: string;
+  imageryEndpoint: string;
+};
 
 const SETTLE_MS = 500;
 
@@ -24,24 +25,16 @@ function zoomFromTileId(id: string): number {
   return Number.parseInt(id.split("/")[0], 10);
 }
 
-function buildDemUrl(index: TileIndex): string {
-  return DEM_ENDPOINT.replace("{z}", `${index.z}`)
-    .replace("{x}", `${index.x}`)
-    .replace("{y}", `${index.y}`);
-}
-
-function buildImageryUrl(index: TileIndex): string {
-  return IMAGERY_ENDPOINT.replace("{z}", `${index.z}`)
+function buildTileUrl(template: string, index: TileIndex): string {
+  return template
+    .replace("{z}", `${index.z}`)
     .replace("{x}", `${index.x}`)
     .replace("{y}", `${index.y}`);
 }
 
 type TileTextures = { demTexture: THREE.Texture; imageryTexture: THREE.Texture };
 
-const fetchWorker = new Worker(
-  new URL("./tileFetchWorker.ts", import.meta.url),
-  { type: "module" },
-);
+const fetchWorker = new TileFetchWorker();
 
 const pendingFetches = new Map<
   string,
@@ -93,7 +86,10 @@ function cancelTile(id: string) {
   fetchWorker.postMessage({ type: "cancel", id });
 }
 
-function loadTileTextures(index: TileIndex): Promise<TileTextures> {
+function loadTileTextures(
+  index: TileIndex,
+  endpoints: TileEndpoints,
+): Promise<TileTextures> {
   const id = tileId(index);
   cancelTile(id);
   return new Promise((resolve, reject) => {
@@ -101,13 +97,14 @@ function loadTileTextures(index: TileIndex): Promise<TileTextures> {
     fetchWorker.postMessage({
       type: "fetch",
       id,
-      demUrl: buildDemUrl(index),
-      imageryUrl: buildImageryUrl(index),
+      demUrl: buildTileUrl(endpoints.demEndpoint, index),
+      imageryUrl: buildTileUrl(endpoints.imageryEndpoint, index),
     });
   });
 }
 
 export function useDeckTileTerrain(
+  endpoints: TileEndpoints,
   decodeParams: DemDecodeParams,
   minRequestZoom: number,
   maxRequestZoom: number,
@@ -227,15 +224,15 @@ export function useDeckTileTerrain(
   }, [targetZoom]);
 
   const getTileData = useCallback(
-    ({ index }: { index: TileIndex }) => loadTileTextures(index),
-    [],
+    ({ index }: { index: TileIndex }) => loadTileTextures(index, endpoints),
+    [endpoints],
   );
 
   const layer = useMemo(
     () =>
       new TileLayer({
         id: "dem-imagery-tile-layer",
-        data: IMAGERY_ENDPOINT,
+        data: endpoints.imageryEndpoint,
         tileSize: 256,
         minZoom: minRequestZoom,
         maxZoom: maxRequestZoom,
