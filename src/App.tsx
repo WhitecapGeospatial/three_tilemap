@@ -516,6 +516,14 @@ export function App() {
               />
               Log tile bounds (once)
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={debug.showSkirts}
+                onChange={(e) => setDebug((prev) => ({ ...prev, showSkirts: e.target.checked }))}
+              />
+              Show tile skirts
+            </label>
           </div>
         ) : null}
       </div>

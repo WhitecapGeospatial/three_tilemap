@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import * as ThreeWebGPU from "three/webgpu";
-import { texture, uniform, vec3, float, positionLocal, uv } from "three/tsl";
+import { attribute, texture, uniform, vec3, float, positionLocal, uv } from "three/tsl";
 import type { DemDecodeParams, MapViewState, TileSize } from "../types";
 import type { RequestTile } from "./types";
 import { metersToWorldScale, tileToWorldBounds } from "../utils/tileMath";
+import { createSkirtedPlaneGeometry } from "./createSkirtedPlaneGeometry";
 import type { DebugVisState } from "../debugVis";
 
 const SEGMENTS = 16;
+const SKIRT_DEPTH_METERS = 500;
 
 type TileTerrainMeshProps = {
   tile: RequestTile;
@@ -44,7 +46,7 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
   const geometry = useMemo(() => {
     const width = worldBounds.worldMaxX - worldBounds.worldMinX;
     const height = worldBounds.worldMaxY - worldBounds.worldMinY;
-    return new THREE.PlaneGeometry(width, height, SEGMENTS, SEGMENTS);
+    return createSkirtedPlaneGeometry(width, height, SEGMENTS);
   }, [worldBounds.worldMaxX, worldBounds.worldMaxY, worldBounds.worldMinX, worldBounds.worldMinY]);
 
   const nodes = useMemo(() => {
@@ -55,12 +57,13 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
     const uHeightScaleFactor = uniform(heightScale * debug.displacementScale * worldUnitsPerMeter);
     const uFlattenTerrain = uniform(debug.flattenTerrain ? 1.0 : 0.0);
     const uWireframeWhite = uniform(debug.wireframe ? 1.0 : 0.0);
-    return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite };
+    const uShowSkirts = uniform(debug.showSkirts ? 1.0 : 0.0);
+    return { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite, uShowSkirts };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tile.demTexture, tile.imageryTexture]);
 
   const material = useMemo(() => {
-    const { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite } = nodes;
+    const { demTexNode, imgTexNode, uBase, uInterval, uHeightScaleFactor, uFlattenTerrain, uWireframeWhite, uShowSkirts } = nodes;
 
     const elevation = uBase.add(
       demTexNode.r.mul(255.0 * 65536.0)
@@ -70,10 +73,15 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
     );
 
     const z = elevation.mul(uHeightScaleFactor).mul(float(1.0).sub(uFlattenTerrain));
+
+    const skirt = attribute("aSkirt", "float");
+    const skirtOffset = skirt.mul(float(SKIRT_DEPTH_METERS)).mul(uHeightScaleFactor).mul(uShowSkirts);
+    const displacedZ = z.sub(skirtOffset);
+
     const color = imgTexNode.rgb.mul(float(1.0).sub(uWireframeWhite)).add(vec3(1.0, 1.0, 1.0).mul(uWireframeWhite));
 
     const mat = new ThreeWebGPU.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
-    mat.positionNode = vec3(positionLocal.x, positionLocal.y, z);
+    mat.positionNode = vec3(positionLocal.x, positionLocal.y, displacedZ);
     mat.colorNode = color;
     return mat;
   }, [nodes]);
@@ -93,6 +101,10 @@ export function TileTerrainMesh({ tile, viewState, viewportSize, heightScale, de
   useEffect(() => {
     nodes.uFlattenTerrain.value = debug.flattenTerrain ? 1.0 : 0.0;
   }, [nodes, debug.flattenTerrain]);
+
+  useEffect(() => {
+    nodes.uShowSkirts.value = debug.showSkirts ? 1.0 : 0.0;
+  }, [nodes, debug.showSkirts]);
 
   useEffect(() => {
     nodes.uBase.value = decodeParams.base;

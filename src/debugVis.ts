@@ -16,6 +16,8 @@ export type DebugVisState = {
   sanityMesh: boolean;
   /** Override Deck-synced camera with a simple lookAt aimed down at tile center */
   bypassDeckCamera: boolean;
+  /** Show vertical skirt geometry below tile edges */
+  showSkirts: boolean;
 };
 
 export const DEFAULT_DEBUG_VIS_STATE: DebugVisState = {
@@ -31,4 +33,5 @@ export const DEFAULT_DEBUG_VIS_STATE: DebugVisState = {
   logTileBounds: false,
   sanityMesh: false,
   bypassDeckCamera: false,
+  showSkirts: true,
 };
