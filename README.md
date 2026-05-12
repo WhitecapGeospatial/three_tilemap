@@ -11,7 +11,7 @@ Available as an NPM package via [GitHub Packages](#installation).
 echo "@anthropic:registry=https://npm.pkg.github.com" >> .npmrc
 
 # Install (no token needed -- the package is public)
-pnpm add @anthropic/deckgl-three-terrain
+pnpm add @whitecapgeospatial/three-tilemap
 ```
 
 ### Peer dependencies
@@ -32,8 +32,8 @@ import {
   useDeckTileTerrain,
   TerrainScene,
   useViewStateStore,
-} from "@anthropic/deckgl-three-terrain";
-import type { TileEndpoints } from "@anthropic/deckgl-three-terrain";
+} from "@whitecapgeospatial/three-tilemap";
+import type { TileEndpoints } from "@whitecapgeospatial/three-tilemap";
 
 const endpoints: TileEndpoints = {
   demEndpoint: "https://your-dem-server.com/tiles/{z}/{x}/{y}.png",
