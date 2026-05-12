@@ -68,12 +68,14 @@ pnpm build:lib  # Build the library to dist/
 
 ### Automated (CI)
 
-Push a version tag and the GitHub Actions workflow handles the rest:
+Push to the `prod` branch and the GitHub Actions workflow builds and publishes automatically:
 
 ```bash
-pnpm version patch   # or minor / major
-git push --follow-tags
+git push origin main:prod
 ```
+
+Note: you must bump the version in `package.json` before pushing, since GitHub Packages
+rejects re-publishing an existing version.
 
 ### Manual
 
